@@ -138,7 +138,7 @@ bluesky-summarizer run --days 30
 
 #### Different Claude Models
 The application supports various Claude models:
-- `claude-3-sonnet-20240229` (default, balanced performance)
+- `claude-3-7-sonnet-latest` (default, balanced performance)
 - `claude-3-haiku-20240307` (faster, more cost-effective)
 - `claude-3-opus-20240229` (highest quality, slower)
 

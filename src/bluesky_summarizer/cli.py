@@ -203,7 +203,7 @@ def fetch(
 @click.option(
     "--model",
     "-m",
-    default="claude-3-sonnet-20240229",
+    default="claude-3-7-sonnet-latest",
     help="Claude model to use for summarization",
 )
 @click.option(
@@ -262,7 +262,7 @@ def summarize(
 @click.option(
     "--model",
     "-m",
-    default="claude-3-sonnet-20240229",
+    default="claude-3-7-sonnet-latest",
     help="Claude model to use for summarization",
 )
 def run(

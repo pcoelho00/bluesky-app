@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 class ClaudeSummarizer:
     """Claude AI-powered text summarizer for Bluesky posts."""
 
-    def __init__(self, api_key: str, model: str = "claude-3-sonnet-20240229"):
+    def __init__(self, api_key: str, model: str = "claude-3-7-sonnet-latest"):
         """
         Initialize Claude summarizer.
 

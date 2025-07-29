@@ -232,13 +232,13 @@ class TestDatabaseModels:
             end_date=end_date,
             post_count=10,
             summary_text="Test summary",
-            model_used="claude-3-sonnet-20240229",
+            model_used="claude-3-7-sonnet-latest",
             created_at=created_at,
         )
 
         assert summary.post_count == 10
         assert summary.summary_text == "Test summary"
-        assert summary.model_used == "claude-3-sonnet-20240229"
+        assert summary.model_used == "claude-3-7-sonnet-latest"
         assert summary.start_date.tzinfo == timezone.utc
 
 
@@ -304,7 +304,7 @@ class TestDatabaseOperations:
             end_date=now,
             post_count=5,
             summary_text="Test summary",
-            model_used="claude-3-sonnet-20240229",
+            model_used="claude-3-7-sonnet-latest",
             created_at=now,
         )
 
@@ -324,11 +324,11 @@ class TestClaudeSummarizer:
 
     def setup_method(self):
         """Set up test fixtures."""
-        self.summarizer = ClaudeSummarizer("test_api_key", "claude-3-sonnet-20240229")
+        self.summarizer = ClaudeSummarizer("test_api_key", "claude-3-7-sonnet-latest")
 
     def test_summarizer_initialization(self):
         """Test summarizer is properly initialized."""
-        assert self.summarizer.model == "claude-3-sonnet-20240229"
+        assert self.summarizer.model == "claude-3-7-sonnet-latest"
 
     def test_empty_posts_summary(self):
         """Test summary generation with empty posts list."""
@@ -340,7 +340,7 @@ class TestClaudeSummarizer:
         assert isinstance(summary, Summary)
         assert summary.post_count == 0
         assert "No posts found" in summary.summary_text
-        assert summary.model_used == "claude-3-sonnet-20240229"
+        assert summary.model_used == "claude-3-7-sonnet-latest"
         assert summary.created_at.tzinfo == timezone.utc
 
     def test_posts_formatting(self):
@@ -417,7 +417,7 @@ class TestClaudeSummarizer:
         ]
 
         # Create summarizer with mocked client
-        summarizer = ClaudeSummarizer("test_api_key", "claude-3-sonnet-20240229")
+        summarizer = ClaudeSummarizer("test_api_key", "claude-3-7-sonnet-latest")
         summarizer.client = mock_client
 
         # Generate summary
@@ -429,13 +429,13 @@ class TestClaudeSummarizer:
         assert isinstance(summary, Summary)
         assert summary.post_count == 1
         assert summary.summary_text == "This is a test summary of the posts."
-        assert summary.model_used == "claude-3-sonnet-20240229"
+        assert summary.model_used == "claude-3-7-sonnet-latest"
         assert summary.created_at.tzinfo == timezone.utc
 
         # Verify API was called correctly
         mock_client.messages.create.assert_called_once()
         call_args = mock_client.messages.create.call_args
-        assert call_args[1]["model"] == "claude-3-sonnet-20240229"
+        assert call_args[1]["model"] == "claude-3-7-sonnet-latest"
         assert call_args[1]["max_tokens"] == 1000
         assert call_args[1]["temperature"] == 0.3
 
@@ -469,7 +469,7 @@ class TestIntegration:
             end_date=now,
             post_count=1,
             summary_text="Test summary",
-            model_used="claude-3-sonnet-20240229",
+            model_used="claude-3-7-sonnet-latest",
             created_at=now,
         )
 
