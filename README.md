@@ -17,7 +17,7 @@ A Python application that reads your Bluesky social media feed and uses Claude A
 
 ### Prerequisites
 
-- Python 3.8 or higher
+- Python 3.12 or higher
 - Bluesky account with app password
 - Anthropic API key for Claude
 
@@ -137,32 +137,9 @@ bluesky-summarizer run --days 30
 ```
 
 #### Different Claude Models
-The application supports various Claude models:
-- `claude-3-7-sonnet-latest` (default, balanced performance)
-- `claude-3-haiku-20240307` (faster, more cost-effective)
-- `claude-3-opus-20240229` (highest quality, slower)
-
+The application supports various Claude models, just pass the `--model` option:
 ```bash
-bluesky-summarizer summarize --model claude-3-opus-20240229
-```
-
-## Project Structure
-
-```
-src/bluesky_summarizer/
-├── __init__.py                 # Package initialization
-├── config.py                   # Configuration management
-├── cli.py                      # Command-line interface
-├── database/                   # Database operations
-│   ├── __init__.py
-│   ├── models.py              # Data models (Post, Summary)
-│   └── operations.py          # Database manager
-├── bluesky/                   # Bluesky API client
-│   ├── __init__.py
-│   └── client.py              # BlueSky API client
-└── ai/                        # AI summarization
-    ├── __init__.py
-    └── summarizer.py          # Claude AI summarizer
+bluesky-summarizer summarize --model claude-3-7-sonnet-latest
 ```
 
 ## Configuration
@@ -198,85 +175,3 @@ The application uses SQLite with two main tables:
 - `summary_text`: Generated summary
 - `model_used`: Claude model used for generation
 - `created_at`: When the summary was created
-
-## Error Handling
-
-The application includes comprehensive error handling:
-
-- **Network Issues**: Automatic retry logic for API calls
-- **Authentication Errors**: Clear error messages for credential issues
-- **Database Errors**: Graceful handling of database connection issues
-- **Rate Limiting**: Respects API rate limits
-
-## WSL Compatibility
-
-This application is fully compatible with Windows Subsystem for Linux (WSL). The SQLite database and all file operations work seamlessly in the WSL environment.
-
-## Development
-
-### Running Tests
-```bash
-# Run all tests
-python run_tests.py
-
-# Or run tests with pytest directly
-python -m pytest test_bluesky_summarizer.py -v
-
-# Run specific test categories
-python -m pytest test_bluesky_summarizer.py::TestDatetimeComparison -v
-```
-
-The test suite covers:
-- **Timezone handling**: Ensures datetime comparisons work correctly
-- **Pydantic models**: Validates data models and type safety
-- **Database operations**: Tests SQLite storage and retrieval
-- **Bluesky client**: Mocks API interactions and data conversion
-- **AI summarization**: Tests Claude integration with mock responses
-- **Integration**: End-to-end workflow validation
-
-### Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests for new functionality
-5. Run the test suite: `python run_tests.py`
-6. Submit a pull request
-
-## Troubleshooting
-
-### Common Issues
-
-**Authentication Failed**:
-- Verify your Bluesky handle and app password
-- Ensure you're using an app password, not your regular password
-
-**API Key Errors**:
-- Check that your Anthropic API key is valid
-- Verify you have sufficient API credits
-
-**Database Permissions**:
-- Ensure the database directory is writable
-- Check file permissions in WSL environments
-
-**No Posts Found**:
-- Verify the date range includes when you were active on Bluesky
-- Check if your timeline has posts in the specified period
-
-### Logs
-
-Enable verbose logging for debugging:
-```bash
-bluesky-summarizer --verbose run
-```
-
-## License
-
-MIT License - see LICENSE file for details.
-
-## Support
-
-For issues and questions:
-1. Check the troubleshooting section above
-2. Review the application logs with `--verbose` flag
-3. Open an issue with detailed error information
