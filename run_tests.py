@@ -9,21 +9,21 @@ import sys
 import os
 
 
-def run_tests():
+def run_tests() -> bool:
     """Run the test suite using pytest."""
     print("🧪 Running Bluesky Feed Summarizer Test Suite")
     print("=" * 50)
 
     # Change to the project directory
-    project_dir = os.path.dirname(os.path.abspath(__file__))
+    project_dir: str = os.path.dirname(os.path.abspath(__file__))
     os.chdir(project_dir)
 
     # Run pytest with verbose output
-    cmd = [
+    cmd: list[str] = [
         sys.executable,
         "-m",
         "pytest",
-        "test_bluesky_summarizer.py",
+        "tests/test_bluesky_summarizer.py",
         "-v",
         "--tb=short",
         "--disable-warnings",  # Hide deprecation warnings for cleaner output
@@ -47,12 +47,12 @@ def run_tests():
         return False
 
 
-def main():
+def main() -> None:
     """Main entry point."""
     print("Bluesky Feed Summarizer - Test Runner")
     print("This will verify that the timezone datetime fixes work correctly.\n")
 
-    success = run_tests()
+    success: bool = run_tests()
 
     if success:
         print("\n🎉 Ready to use! You can now:")
