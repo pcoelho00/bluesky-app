@@ -8,10 +8,10 @@ from unittest.mock import Mock, patch
 import tempfile
 import os
 
-from src.bluesky_summarizer.bluesky.client import BlueSkyClient
-from src.bluesky_summarizer.database.models import Post, Summary
-from src.bluesky_summarizer.database.operations import DatabaseManager
-from src.bluesky_summarizer.ai.summarizer import ClaudeSummarizer
+from bluesky_summarizer.bluesky.client import BlueSkyClient
+from bluesky_summarizer.database.models import Post, Summary
+from bluesky_summarizer.database.operations import DatabaseManager
+from bluesky_summarizer.ai.summarizer import ClaudeSummarizer
 
 
 class TestDatetimeComparison:

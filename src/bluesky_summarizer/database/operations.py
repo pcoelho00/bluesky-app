@@ -4,15 +4,56 @@ Database operations for managing Bluesky posts and summaries.
 
 import sqlite3
 import os
-from datetime import datetime
-from typing import List, Optional
+import datetime as dt
+from typing import Any, List, Optional
 from .models import Post, Summary
+
+
+# https://docs.python.org/3/library/sqlite3.html#sqlite3-adapter-converter-recipes
+def adapt_date_iso(val: Any) -> Any:
+    """Adapt datetime.date to ISO 8601 date."""
+    return val.isoformat()
+
+
+def adapt_datetime_iso(val: Any) -> Any:
+    """Adapt datetime.datetime to timezone-naive ISO 8601 date."""
+    return val.replace(tzinfo=None).isoformat()
+
+
+def adapt_datetime_epoch(val: Any) -> int:
+    """Adapt datetime.datetime to Unix timestamp."""
+    return int(val.timestamp())
+
+
+sqlite3.register_adapter(dt.date, adapt_date_iso)
+sqlite3.register_adapter(dt.datetime, adapt_datetime_iso)
+sqlite3.register_adapter(dt.datetime, adapt_datetime_epoch)
+
+
+def convert_date(val: Any) -> dt.date:
+    """Convert ISO 8601 date to datetime.date object."""
+    return dt.date.fromisoformat(val.decode())
+
+
+def convert_datetime(val: Any) -> dt.datetime:
+    """Convert ISO 8601 datetime to datetime.datetime object."""
+    return dt.datetime.fromisoformat(val.decode())
+
+
+def convert_timestamp(val: Any) -> dt.datetime:
+    """Convert Unix epoch timestamp to datetime.datetime object."""
+    return dt.datetime.fromtimestamp(int(val))
+
+
+sqlite3.register_converter("date", convert_date)
+sqlite3.register_converter("datetime", convert_datetime)
+sqlite3.register_converter("timestamp", convert_timestamp)
 
 
 class DatabaseManager:
     """Manages SQLite database operations for Bluesky posts and summaries."""
 
-    def __init__(self, db_path: str):
+    def __init__(self, db_path: str) -> None:
         """Initialize database manager with database path."""
         self.db_path = db_path
         self._ensure_database_directory()
@@ -113,7 +154,7 @@ class DatabaseManager:
         return count
 
     def get_posts_by_date_range(
-        self, start_date: datetime, end_date: datetime
+        self, start_date: dt.datetime, end_date: dt.datetime
     ) -> List[Post]:
         """Get posts within a specific date range."""
         with sqlite3.connect(self.db_path) as conn:
@@ -197,7 +238,7 @@ class DatabaseManager:
             return None
 
     def get_summaries_by_date_range(
-        self, start_date: datetime, end_date: datetime
+        self, start_date: dt.datetime, end_date: dt.datetime
     ) -> List[Summary]:
         """Get summaries within a specific date range."""
         with sqlite3.connect(self.db_path) as conn:
@@ -228,7 +269,7 @@ class DatabaseManager:
             ]
 
     def get_post_count_by_date_range(
-        self, start_date: datetime, end_date: datetime
+        self, start_date: dt.datetime, end_date: dt.datetime
     ) -> int:
         """Get the count of posts within a specific date range."""
         with sqlite3.connect(self.db_path) as conn:
