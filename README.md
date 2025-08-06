@@ -111,6 +111,21 @@ bluesky-summarizer summarize --model claude-3-haiku-20240307
 bluesky-summarizer summarize --no-save
 ```
 
+#### View Saved Posts
+```bash
+# View recent posts in chronological order
+bluesky-summarizer posts
+
+# View posts from the last 7 days with limit
+bluesky-summarizer posts --days 7 --limit 20
+
+# View posts from a specific author
+bluesky-summarizer posts --author username.bsky.social --days 30
+
+# View posts from a specific date range
+bluesky-summarizer posts --start-date 2024-01-01 --end-date 2024-01-02 --limit 50
+```
+
 #### View Summary History
 ```bash
 # Show the latest summary
@@ -122,8 +137,20 @@ bluesky-summarizer history --limit 5
 
 #### Check Application Status
 ```bash
+# View application configuration and database status
 bluesky-summarizer status
+
+# Verify database integrity and check for duplicates
+bluesky-summarizer verify
 ```
+
+### Database Features
+
+The application automatically ensures **post uniqueness** based on URI:
+- **Duplicate Prevention**: Posts with the same URI are automatically updated instead of creating duplicates
+- **Integrity Checking**: Use `bluesky-summarizer verify` to check database integrity
+- **Update Tracking**: Fetch operations show counts of new vs updated posts
+- **Content Analysis**: Detect posts with duplicate text content (normal for reposts)
 
 ### Advanced Usage
 

@@ -62,8 +62,11 @@ def _fetch_posts_logic(
 
         # Save to database
         progress.update(task, description="Saving posts to database...")
-        saved_count = db_manager.save_posts(posts)
-        progress.update(task, description=f"Saved {saved_count} new posts ✓")
+        save_result = db_manager.save_posts(posts)
+        progress.update(
+            task,
+            description=f"Saved {save_result['new']} new posts, updated {save_result['updated']} existing ✓",
+        )
 
     # Display results
     table = Table(title="Fetch Results")
@@ -72,11 +75,13 @@ def _fetch_posts_logic(
 
     table.add_row("Date Range", f"{start_date.date()} to {end_date.date()}")
     table.add_row("Posts Fetched", str(len(posts)))
-    table.add_row("New Posts Saved", str(saved_count))
+    table.add_row("New Posts Saved", str(save_result["new"]))
+    table.add_row("Existing Posts Updated", str(save_result["updated"]))
+    table.add_row("Total Posts Processed", str(save_result["total"]))
     table.add_row("Database Path", config.database.path)
 
     console.print(table)
-    return saved_count
+    return save_result["new"]
 
 
 def _summarize_posts_logic(
@@ -337,6 +342,148 @@ def history(limit: int):
 
 
 @cli.command()
+@click.option(
+    "--days",
+    "-d",
+    default=None,
+    type=int,
+    help="Number of days back to show posts (default: from config)",
+)
+@click.option(
+    "--start-date", type=click.DateTime(["%Y-%m-%d"]), help="Start date (YYYY-MM-DD)"
+)
+@click.option(
+    "--end-date", type=click.DateTime(["%Y-%m-%d"]), help="End date (YYYY-MM-DD)"
+)
+@click.option(
+    "--limit", "-l", default=50, type=int, help="Maximum number of posts to show"
+)
+@click.option(
+    "--author",
+    "-a",
+    default=None,
+    help="Filter by author handle (e.g., user.bsky.social)",
+)
+def posts(
+    days: Optional[int],
+    start_date: Optional[datetime],
+    end_date: Optional[datetime],
+    limit: int,
+    author: Optional[str],
+):
+    """Display saved posts from the database in chronological order."""
+
+    try:
+        # Determine date range
+        if start_date and end_date:
+            query_start = (
+                start_date.replace(tzinfo=timezone.utc)
+                if start_date.tzinfo is None
+                else start_date
+            )
+            query_end = (
+                end_date.replace(tzinfo=timezone.utc)
+                if end_date.tzinfo is None
+                else end_date
+            )
+        elif days:
+            query_end = datetime.now(timezone.utc)
+            query_start = query_end - timedelta(days=days)
+        else:
+            query_end = datetime.now(timezone.utc)
+            query_start = query_end - timedelta(days=config.app.default_days_back)
+
+        console.print(
+            f"[blue]Loading posts from {query_start.date()} to {query_end.date()}[/blue]"
+        )
+
+        # Initialize database manager
+        db_manager = DatabaseManager(config.database.path)
+
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            console=console,
+        ) as progress:
+            task = progress.add_task("Loading posts from database...", total=None)
+
+            # Get posts from database
+            all_posts = db_manager.get_posts_by_date_range(query_start, query_end)
+
+            # Filter by author if specified
+            if author:
+                all_posts = [
+                    post
+                    for post in all_posts
+                    if author.lower() in post.author_handle.lower()
+                ]
+                progress.update(
+                    task,
+                    description=f"Filtered {len(all_posts)} posts by author '{author}' ✓",
+                )
+            else:
+                progress.update(task, description=f"Loaded {len(all_posts)} posts ✓")
+
+            # Sort posts chronologically (oldest first)
+            sorted_posts = sorted(all_posts, key=lambda p: p.created_at)
+
+            # Apply limit
+            display_posts = sorted_posts[:limit] if limit > 0 else sorted_posts
+
+        if not display_posts:
+            console.print("[yellow]No posts found in the specified criteria.[/yellow]")
+            return
+
+        # Display summary info
+        summary_table = Table(title="Posts Query Summary")
+        summary_table.add_column("Metric", style="cyan")
+        summary_table.add_column("Value", style="green")
+
+        summary_table.add_row(
+            "Date Range", f"{query_start.date()} to {query_end.date()}"
+        )
+        summary_table.add_row("Total Posts Found", str(len(all_posts)))
+        summary_table.add_row("Posts Displayed", str(len(display_posts)))
+        if author:
+            summary_table.add_row("Author Filter", author)
+
+        console.print(summary_table)
+        console.print()
+
+        # Display posts
+        for i, post in enumerate(display_posts, 1):
+            # Create engagement info
+            engagement = (
+                f"❤️ {post.like_count} | 🔄 {post.repost_count} | 💬 {post.reply_count}"
+            )
+
+            # Format timestamp
+            timestamp = post.created_at.strftime("%Y-%m-%d %H:%M:%S UTC")
+
+            # Create post panel
+            panel = Panel(
+                f"[bold]{post.text}[/bold]\n\n[dim]{engagement}[/dim]",
+                title=f"#{i} • @{post.author_handle} • {timestamp}",
+                subtitle=f"URI: {post.uri}",
+                border_style="blue" if i % 2 == 1 else "green",
+                expand=False,
+            )
+            console.print(panel)
+
+        # Show pagination info if limited
+        if len(all_posts) > limit:
+            console.print(
+                f"\n[yellow]Showing {len(display_posts)} of {len(all_posts)} posts. "
+                f"Use --limit to show more.[/yellow]"
+            )
+
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        logger.exception("Error in posts command")
+        sys.exit(1)
+
+
+@cli.command()
 def status():
     """Show application status and configuration."""
 
@@ -384,10 +531,83 @@ def status():
                 )
             else:
                 table.add_row("Latest Summary", "None")
+
+            # Get total post count
+            total_posts = db_manager.get_total_post_count()
+            table.add_row("Total Posts", str(total_posts))
+
         except Exception:
             table.add_row("Latest Summary", "Error reading database")
 
     console.print(table)
+
+
+@cli.command()
+def verify():
+    """Verify database integrity and check for duplicate posts."""
+
+    try:
+        db_manager = DatabaseManager(config.database.path)
+
+        console.print("[blue]🔍 Verifying database integrity...[/blue]")
+
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            console=console,
+        ) as progress:
+            task = progress.add_task("Analyzing database...", total=None)
+
+            # Get total post count
+            total_posts = db_manager.get_total_post_count()
+            progress.update(task, description=f"Found {total_posts} total posts ✓")
+
+            # Check for URI uniqueness (should be enforced by database constraint)
+            unique_uris = db_manager.get_unique_uri_count()
+            progress.update(task, description=f"Verified {unique_uris} unique URIs ✓")
+
+        # Display results
+        verification_table = Table(title="Database Verification Results")
+        verification_table.add_column("Check", style="cyan")
+        verification_table.add_column("Result", style="green")
+
+        verification_table.add_row("Total Posts", str(total_posts))
+        verification_table.add_row("Unique URIs", str(unique_uris))
+
+        if total_posts == unique_uris:
+            verification_table.add_row(
+                "URI Uniqueness", "✅ All posts have unique URIs"
+            )
+        else:
+            verification_table.add_row(
+                "URI Uniqueness",
+                f"⚠️ Found {total_posts - unique_uris} potential duplicates",
+            )
+
+        # Check for posts with same content but different URIs
+        duplicate_content = db_manager.get_duplicate_content_count()
+        verification_table.add_row(
+            "Duplicate Content",
+            f"Found {duplicate_content} posts with duplicate text"
+            if duplicate_content > 0
+            else "✅ No duplicate content found",
+        )
+
+        console.print(verification_table)
+
+        if total_posts == unique_uris and duplicate_content == 0:
+            console.print(
+                "\n[green]✅ Database integrity verified! All posts are unique.[/green]"
+            )
+        else:
+            console.print(
+                "\n[yellow]⚠️ Some duplicates or integrity issues found. This is usually normal due to content updates or reposts.[/yellow]"
+            )
+
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        logger.exception("Error in verify command")
+        sys.exit(1)
 
 
 def main():

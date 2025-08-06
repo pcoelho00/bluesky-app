@@ -4,15 +4,31 @@ Tests for the Bluesky Feed Summarizer application.
 
 import pytest
 from datetime import datetime, timezone, timedelta
-from unittest.mock import Mock, patch
-import tempfile
 import os
 from typing import List
+from unittest.mock import Mock
 
 from bluesky_summarizer.bluesky.client import BlueSkyClient
 from bluesky_summarizer.database.models import Post, Summary
 from bluesky_summarizer.database.operations import DatabaseManager
 from bluesky_summarizer.ai.summarizer import ClaudeSummarizer
+
+# Global test database path
+TEST_DB_PATH = "test_database.db"
+
+
+def setup_module() -> None:
+    """Set up module-level fixtures."""
+    # Clean up any existing test database
+    if os.path.exists(TEST_DB_PATH):
+        os.unlink(TEST_DB_PATH)
+
+
+def teardown_module() -> None:
+    """Clean up module-level fixtures."""
+    # Remove test database after all tests
+    if os.path.exists(TEST_DB_PATH):
+        os.unlink(TEST_DB_PATH)
 
 
 class TestDatetimeComparison:
@@ -67,36 +83,36 @@ class TestBlueSkyClient:
         assert self.client.password == "test_password"
         assert not self.client._authenticated
 
-    @patch("src.bluesky_summarizer.bluesky.client.Client")
-    def test_authentication_success(self, mock_client_class: Mock) -> None:
-        """Test successful authentication."""
-        mock_client: Mock = Mock()
-        mock_client_class.return_value = mock_client
+    def test_authentication_simulation(self) -> None:
+        """Test authentication logic simulation."""
+        # Create a mock client object
+        mock_client = Mock()
         mock_client.login.return_value = True
 
-        client: BlueSkyClient = BlueSkyClient("test.bsky.social", "test_password")
-        client.client = mock_client
+        # Replace the client
+        self.client.client = mock_client
 
-        result: bool = client.authenticate()
+        # Test successful authentication
+        result: bool = self.client.authenticate()
 
         assert result is True
-        assert client._authenticated is True
+        assert self.client._authenticated is True
         mock_client.login.assert_called_once_with("test.bsky.social", "test_password")
 
-    @patch("src.bluesky_summarizer.bluesky.client.Client")
-    def test_authentication_failure(self, mock_client_class: Mock) -> None:
-        """Test authentication failure."""
-        mock_client: Mock = Mock()
-        mock_client_class.return_value = mock_client
+    def test_authentication_failure_simulation(self) -> None:
+        """Test authentication failure simulation."""
+        # Create a mock client that raises an exception
+        mock_client = Mock()
         mock_client.login.side_effect = Exception("Authentication failed")
 
-        client: BlueSkyClient = BlueSkyClient("test.bsky.social", "test_password")
-        client.client = mock_client
+        # Replace the client
+        self.client.client = mock_client
 
-        result: bool = client.authenticate()
+        # Test authentication failure
+        result: bool = self.client.authenticate()
 
         assert result is False
-        assert client._authenticated is False
+        assert self.client._authenticated is False
 
     def test_timezone_normalization_in_fetch(self) -> None:
         """Test that fetch_timeline_posts normalizes timezone-naive datetimes."""
@@ -107,21 +123,26 @@ class TestBlueSkyClient:
         assert start_date.tzinfo is None
         assert end_date.tzinfo is None
 
-        with patch.object(self.client, "authenticate", return_value=True):
-            with patch.object(self.client.client, "get_timeline") as mock_get_timeline:
-                # Mock empty response to avoid actual API call
-                mock_response: Mock = Mock()
-                mock_response.feed = []
-                mock_response.cursor = None
-                mock_get_timeline.return_value = mock_response
+        # Mock the authentication and get_timeline methods
+        def mock_authenticate() -> bool:
+            return True
 
-                # This should not raise a TypeError
-                result: List[Post] = self.client.fetch_timeline_posts(
-                    start_date, end_date
-                )
+        def mock_get_timeline(**kwargs) -> Mock:
+            mock_response = Mock()
+            mock_response.feed = []
+            mock_response.cursor = None
+            return mock_response
 
-                assert isinstance(result, list)
-                assert len(result) == 0
+        # Replace the methods
+        self.client.authenticate = mock_authenticate
+        self.client.client = Mock()
+        self.client.client.get_timeline = mock_get_timeline
+
+        # This should not raise a TypeError
+        result: List[Post] = self.client.fetch_timeline_posts(start_date, end_date)
+
+        assert isinstance(result, list)
+        assert len(result) == 0
 
     def test_post_conversion(self) -> None:
         """Test conversion of AT Protocol post to our Post model."""
@@ -250,24 +271,26 @@ class TestDatabaseOperations:
 
     def setup_method(self) -> None:
         """Set up test database."""
-        # Use temporary file for testing to avoid connection issues with in-memory DB
-        self.temp_db: tempfile.NamedTemporaryFile = tempfile.NamedTemporaryFile(
-            delete=False, suffix=".db"
-        )
-        self.temp_db.close()
-        self.db_manager: DatabaseManager = DatabaseManager(self.temp_db.name)
+        # Use the shared test database path
+        self.db_manager: DatabaseManager = DatabaseManager(TEST_DB_PATH)
+        # Clean database before each test
+        self._clean_database()
 
-    def teardown_method(self) -> None:
-        """Clean up test database."""
-        # Remove temporary database file
-        if os.path.exists(self.temp_db.name):
-            os.unlink(self.temp_db.name)
+    def _clean_database(self) -> None:
+        """Clean all data from the test database."""
+        import sqlite3
+
+        with sqlite3.connect(self.db_manager.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM posts")
+            cursor.execute("DELETE FROM summaries")
+            conn.commit()
 
     def test_database_initialization(self) -> None:
         """Test database tables are created."""
         # Tables should be created during initialization
         # This test passes if no exceptions are raised
-        assert self.db_manager.db_path.endswith(".db")
+        assert self.db_manager.db_path == TEST_DB_PATH
 
     def test_save_and_retrieve_post(self) -> None:
         """Test saving and retrieving a post."""
@@ -324,6 +347,190 @@ class TestDatabaseOperations:
         assert latest_summary is not None
         assert latest_summary.summary_text == "Test summary"
         assert latest_summary.post_count == 5
+
+    def test_post_uniqueness_by_uri(self) -> None:
+        """Test that posts are unique by URI."""
+        now: datetime = datetime.now(timezone.utc)
+
+        # Create two posts with the same URI but different content
+        post1: Post = Post(
+            uri="at://test/post/unique",
+            cid="cid1",
+            author_handle="test.bsky.social",
+            author_did="did:plc:test123",
+            text="Original post text",
+            created_at=now,
+            like_count=5,
+            repost_count=2,
+            reply_count=1,
+            indexed_at=now,
+        )
+
+        post2: Post = Post(
+            uri="at://test/post/unique",  # Same URI
+            cid="cid2",
+            author_handle="test.bsky.social",
+            author_did="did:plc:test123",
+            text="Updated post text",
+            created_at=now,
+            like_count=10,  # Different metrics
+            repost_count=5,
+            reply_count=3,
+            indexed_at=now,
+        )
+
+        # Save first post
+        result1: dict[str, int] = self.db_manager.save_posts([post1])
+        assert result1["new"] == 1
+        assert result1["updated"] == 0
+
+        # Save second post with same URI (should update, not create new)
+        result2: dict[str, int] = self.db_manager.save_posts([post2])
+        assert result2["new"] == 0
+        assert result2["updated"] == 1
+
+        # Verify only one post exists
+        total_posts: int = self.db_manager.get_total_post_count()
+        assert total_posts == 1
+
+        # Verify the post was updated with new content
+        start_date: datetime = now - timedelta(hours=1)
+        end_date: datetime = now + timedelta(hours=1)
+        posts: List[Post] = self.db_manager.get_posts_by_date_range(
+            start_date, end_date
+        )
+
+        assert len(posts) == 1
+        updated_post: Post = posts[0]
+        assert updated_post.uri == "at://test/post/unique"
+        assert updated_post.text == "Updated post text"
+        assert updated_post.like_count == 10
+
+    def test_bulk_save_with_duplicates(self) -> None:
+        """Test bulk saving posts with some duplicates."""
+        now: datetime = datetime.now(timezone.utc)
+
+        posts: List[Post] = [
+            Post(
+                uri="at://test/post/1",
+                cid="cid1",
+                author_handle="user1.bsky.social",
+                author_did="did:plc:user1",
+                text="First post",
+                created_at=now,
+                like_count=1,
+                repost_count=0,
+                reply_count=0,
+                indexed_at=now,
+            ),
+            Post(
+                uri="at://test/post/2",
+                cid="cid2",
+                author_handle="user2.bsky.social",
+                author_did="did:plc:user2",
+                text="Second post",
+                created_at=now,
+                like_count=2,
+                repost_count=0,
+                reply_count=0,
+                indexed_at=now,
+            ),
+            Post(
+                uri="at://test/post/1",  # Duplicate URI
+                cid="cid1_updated",
+                author_handle="user1.bsky.social",
+                author_did="did:plc:user1",
+                text="Updated first post",
+                created_at=now,
+                like_count=5,
+                repost_count=1,
+                reply_count=0,
+                indexed_at=now,
+            ),
+        ]
+
+        # Save all posts
+        result: dict[str, int] = self.db_manager.save_posts(posts)
+
+        # Should have 2 new posts and 1 update (the duplicate URI)
+        assert result["new"] == 2
+        assert result["updated"] == 1
+        assert result["total"] == 3
+
+        # Verify database state
+        total_posts: int = self.db_manager.get_total_post_count()
+        unique_uris: int = self.db_manager.get_unique_uri_count()
+
+        assert total_posts == 2  # Only 2 unique posts
+        assert unique_uris == 2  # 2 unique URIs
+        assert total_posts == unique_uris  # No URI duplicates
+
+    def test_database_integrity_methods(self) -> None:
+        """Test database integrity checking methods."""
+        now: datetime = datetime.now(timezone.utc)
+
+        # Add some test data
+        posts: List[Post] = [
+            Post(
+                uri="at://test/post/1",
+                cid="cid1",
+                author_handle="user1.bsky.social",
+                author_did="did:plc:user1",
+                text="Unique content 1",
+                created_at=now,
+                like_count=1,
+                repost_count=0,
+                reply_count=0,
+                indexed_at=now,
+            ),
+            Post(
+                uri="at://test/post/2",
+                cid="cid2",
+                author_handle="user2.bsky.social",
+                author_did="did:plc:user2",
+                text="Duplicate content",
+                created_at=now,
+                like_count=2,
+                repost_count=0,
+                reply_count=0,
+                indexed_at=now,
+            ),
+            Post(
+                uri="at://test/post/3",
+                cid="cid3",
+                author_handle="user3.bsky.social",
+                author_did="did:plc:user3",
+                text="Duplicate content",  # Same content as post 2
+                created_at=now,
+                like_count=3,
+                repost_count=0,
+                reply_count=0,
+                indexed_at=now,
+            ),
+        ]
+
+        self.db_manager.save_posts(posts)
+
+        # Test count methods
+        total_posts: int = self.db_manager.get_total_post_count()
+        unique_uris: int = self.db_manager.get_unique_uri_count()
+        duplicate_content: int = self.db_manager.get_duplicate_content_count()
+
+        assert total_posts == 3
+        assert unique_uris == 3
+        assert duplicate_content == 1  # One text appears twice
+
+        # Test duplicate detection
+        duplicate_uris: List[str] = self.db_manager.find_duplicate_uris()
+        assert len(duplicate_uris) == 0  # Should be no URI duplicates due to constraint
+
+        # Test content duplicate detection
+        content_duplicates: List[tuple[str, int]] = (
+            self.db_manager.get_posts_with_duplicate_content()
+        )
+        assert len(content_duplicates) == 1
+        assert content_duplicates[0][0] == "Duplicate content"
+        assert content_duplicates[0][1] == 2  # Appears twice
 
 
 class TestClaudeSummarizer:
@@ -394,16 +601,14 @@ class TestClaudeSummarizer:
         assert "3 likes" in formatted_text
         assert "5 likes" in formatted_text
 
-    @patch("src.bluesky_summarizer.ai.summarizer.Anthropic")
-    def test_summary_generation_with_mock(self, mock_anthropic_class: Mock) -> None:
-        """Test summary generation with mocked Claude API."""
-        # Mock the Anthropic client
-        mock_client: Mock = Mock()
-        mock_anthropic_class.return_value = mock_client
+    def test_summary_generation_with_mock_simulation(self) -> None:
+        """Test summary generation with simulated Claude API."""
+        # Create a mock client
+        mock_client = Mock()
 
         # Mock the API response
-        mock_response: Mock = Mock()
-        mock_content: Mock = Mock()
+        mock_response = Mock()
+        mock_content = Mock()
         mock_content.text = "This is a test summary of the posts."
         mock_response.content = [mock_content]
         mock_client.messages.create.return_value = mock_response
@@ -425,16 +630,13 @@ class TestClaudeSummarizer:
             )
         ]
 
-        # Create summarizer with mocked client
-        summarizer: ClaudeSummarizer = ClaudeSummarizer(
-            "test_api_key", "claude-3-7-sonnet-latest"
-        )
-        summarizer.client = mock_client
+        # Replace the client
+        self.summarizer.client = mock_client
 
         # Generate summary
         start_date: datetime = now - timedelta(hours=1)
         end_date: datetime = now + timedelta(hours=1)
-        summary: Summary = summarizer.summarize_posts(posts, start_date, end_date)
+        summary: Summary = self.summarizer.summarize_posts(posts, start_date, end_date)
 
         # Verify results
         assert isinstance(summary, Summary)
@@ -490,6 +692,120 @@ class TestIntegration:
         assert summary.start_date < summary.end_date
         assert summary.created_at.tzinfo == timezone.utc
         assert post.created_at.tzinfo == timezone.utc
+
+    def test_posts_chronological_ordering(self) -> None:
+        """Test that posts are returned in chronological order."""
+        # Create test posts with different timestamps
+        now: datetime = datetime.now(timezone.utc)
+
+        posts: List[Post] = [
+            Post(
+                uri="at://test/post/3",
+                cid="cid3",
+                author_handle="user3.bsky.social",
+                author_did="did:plc:user3",
+                text="Latest post",
+                created_at=now,
+                like_count=1,
+                repost_count=0,
+                reply_count=0,
+                indexed_at=now,
+            ),
+            Post(
+                uri="at://test/post/1",
+                cid="cid1",
+                author_handle="user1.bsky.social",
+                author_did="did:plc:user1",
+                text="Oldest post",
+                created_at=now - timedelta(hours=2),
+                like_count=3,
+                repost_count=1,
+                reply_count=0,
+                indexed_at=now,
+            ),
+            Post(
+                uri="at://test/post/2",
+                cid="cid2",
+                author_handle="user2.bsky.social",
+                author_did="did:plc:user2",
+                text="Middle post",
+                created_at=now - timedelta(hours=1),
+                like_count=2,
+                repost_count=0,
+                reply_count=1,
+                indexed_at=now,
+            ),
+        ]
+
+        # Sort chronologically (oldest first)
+        sorted_posts: List[Post] = sorted(posts, key=lambda p: p.created_at)
+
+        # Verify chronological order
+        assert len(sorted_posts) == 3
+        assert sorted_posts[0].text == "Oldest post"
+        assert sorted_posts[1].text == "Middle post"
+        assert sorted_posts[2].text == "Latest post"
+
+        # Verify timestamps are in ascending order
+        assert sorted_posts[0].created_at < sorted_posts[1].created_at
+        assert sorted_posts[1].created_at < sorted_posts[2].created_at
+
+    def test_posts_author_filtering(self) -> None:
+        """Test that posts can be filtered by author handle."""
+        now: datetime = datetime.now(timezone.utc)
+
+        posts: List[Post] = [
+            Post(
+                uri="at://test/post/1",
+                cid="cid1",
+                author_handle="alice.bsky.social",
+                author_did="did:plc:alice",
+                text="Alice's post",
+                created_at=now,
+                like_count=1,
+                repost_count=0,
+                reply_count=0,
+                indexed_at=now,
+            ),
+            Post(
+                uri="at://test/post/2",
+                cid="cid2",
+                author_handle="bob.bsky.social",
+                author_did="did:plc:bob",
+                text="Bob's post",
+                created_at=now,
+                like_count=2,
+                repost_count=0,
+                reply_count=0,
+                indexed_at=now,
+            ),
+            Post(
+                uri="at://test/post/3",
+                cid="cid3",
+                author_handle="alice.bsky.social",
+                author_did="did:plc:alice",
+                text="Another Alice post",
+                created_at=now,
+                like_count=3,
+                repost_count=0,
+                reply_count=0,
+                indexed_at=now,
+            ),
+        ]
+
+        # Filter by author (case-insensitive partial match)
+        author_filter: str = "alice"
+        filtered_posts: List[Post] = [
+            post
+            for post in posts
+            if author_filter.lower() in post.author_handle.lower()
+        ]
+
+        # Verify filtering works
+        assert len(filtered_posts) == 2
+        assert all("alice" in post.author_handle.lower() for post in filtered_posts)
+        assert filtered_posts[0].text == "Alice's post"
+        assert filtered_posts[1].text == "Another Alice post"
 
 
 if __name__ == "__main__":

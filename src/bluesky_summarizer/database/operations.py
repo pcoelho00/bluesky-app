@@ -141,17 +141,94 @@ class DatabaseManager:
 
             return cursor.lastrowid
 
-    def save_posts(self, posts: List[Post]) -> int:
-        """Save multiple posts to the database. Returns the number of posts saved."""
-        count = 0
-        for post in posts:
-            try:
-                self.save_post(post)
-                count += 1
-            except sqlite3.IntegrityError:
-                # Post already exists, skip
-                continue
-        return count
+    def post_exists(self, uri: str) -> bool:
+        """Check if a post with the given URI already exists in the database."""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT 1 FROM posts WHERE uri = ? LIMIT 1", (uri,))
+            return cursor.fetchone() is not None
+
+    def get_existing_uris(self, uris: List[str]) -> set[str]:
+        """Get a set of URIs that already exist in the database."""
+        if not uris:
+            return set()
+
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            placeholders = ",".join("?" * len(uris))
+            cursor.execute(f"SELECT uri FROM posts WHERE uri IN ({placeholders})", uris)
+            return {row[0] for row in cursor.fetchall()}
+
+    def save_posts(self, posts: List[Post]) -> dict[str, int]:
+        """
+        Save multiple posts to the database.
+        Returns a dictionary with counts: {'new': int, 'updated': int, 'total': int}
+        """
+        if not posts:
+            return {"new": 0, "updated": 0, "total": 0}
+
+        # Get existing URIs to determine which posts are new vs updates
+        post_uris = [post.uri for post in posts]
+        existing_uris = self.get_existing_uris(post_uris)
+
+        new_count = 0
+        updated_count = 0
+        processed_in_batch = set()  # Track URIs we've seen in this batch
+
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+
+            for post in posts:
+                try:
+                    # Check if this URI was already in DB or processed in this batch
+                    is_existing = (
+                        post.uri in existing_uris or post.uri in processed_in_batch
+                    )
+
+                    cursor.execute(
+                        """
+                        INSERT OR REPLACE INTO posts 
+                        (uri, cid, author_handle, author_did, text, created_at, 
+                         like_count, repost_count, reply_count, indexed_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                        (
+                            post.uri,
+                            post.cid,
+                            post.author_handle,
+                            post.author_did,
+                            post.text,
+                            post.created_at,
+                            post.like_count,
+                            post.repost_count,
+                            post.reply_count,
+                            post.indexed_at,
+                        ),
+                    )
+
+                    if is_existing:
+                        updated_count += 1
+                    else:
+                        new_count += 1
+
+                    # Mark this URI as processed in this batch
+                    processed_in_batch.add(post.uri)
+
+                except sqlite3.Error as e:
+                    # Log the error but continue with other posts
+                    import logging
+
+                    logger = logging.getLogger(__name__)
+                    logger.error(f"Error saving post {post.uri}: {e}")
+                    continue
+
+            conn.commit()
+
+        return {
+            "new": new_count,
+            "updated": updated_count,
+            "total": new_count + updated_count,
+        }
 
     def get_posts_by_date_range(
         self, start_date: dt.datetime, end_date: dt.datetime
@@ -236,6 +313,59 @@ class DatabaseManager:
                     created_at=row[6],
                 )
             return None
+
+    def get_total_post_count(self) -> int:
+        """Get the total number of posts in the database."""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM posts")
+            return cursor.fetchone()[0]
+
+    def get_unique_uri_count(self) -> int:
+        """Get the number of unique URIs in the database."""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(DISTINCT uri) FROM posts")
+            return cursor.fetchone()[0]
+
+    def get_duplicate_content_count(self) -> int:
+        """Get the number of posts that have duplicate text content."""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT COUNT(*) FROM (
+                    SELECT text, COUNT(*) as cnt 
+                    FROM posts 
+                    GROUP BY text 
+                    HAVING cnt > 1
+                ) AS duplicates
+            """)
+            return cursor.fetchone()[0]
+
+    def get_posts_with_duplicate_content(self) -> List[tuple[str, int]]:
+        """Get posts that have duplicate text content. Returns (text, count) tuples."""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT text, COUNT(*) as cnt 
+                FROM posts 
+                GROUP BY text 
+                HAVING cnt > 1
+                ORDER BY cnt DESC
+            """)
+            return cursor.fetchall()
+
+    def find_duplicate_uris(self) -> List[str]:
+        """Find any duplicate URIs in the database (should be none due to UNIQUE constraint)."""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT uri, COUNT(*) as cnt 
+                FROM posts 
+                GROUP BY uri 
+                HAVING cnt > 1
+            """)
+            return [row[0] for row in cursor.fetchall()]
 
     def get_summaries_by_date_range(
         self, start_date: dt.datetime, end_date: dt.datetime
