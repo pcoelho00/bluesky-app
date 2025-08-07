@@ -12,6 +12,7 @@ A Python application that reads your Bluesky social media feed and uses Claude A
 - 📅 **Flexible Date Ranges**: Specify custom date ranges for fetching and summarizing
 - 🖥️ **CLI Interface**: Easy-to-use command-line interface with rich output
 - ⚙️ **Configurable**: Customizable settings via environment variables
+- 🔴 **Live Streaming**: Continuously monitor Bluesky for new posts in real-time
 
 ## Installation
 
@@ -78,6 +79,31 @@ bluesky-summarizer run
 ```bash
 bluesky-summarizer run --days 3
 ```
+
+**Start live streaming to continuously monitor for new posts**:
+```bash
+bluesky-summarizer stream
+```
+
+### Live Streaming
+
+The streaming service continuously monitors Bluesky for new posts and saves them to the database in real-time:
+
+```bash
+# Start streaming with default settings (30-second polling)
+bluesky-summarizer stream
+
+# Custom polling interval and user filtering
+bluesky-summarizer stream --poll-interval 60 --users tech.bsky.social
+
+# Filter by keywords
+bluesky-summarizer stream --keywords ai --keywords python
+
+# Combine filters
+bluesky-summarizer stream --users alice.bsky.social --keywords "machine learning"
+```
+
+For detailed streaming documentation, see [STREAMING.md](STREAMING.md).
 
 ### Detailed Commands
 

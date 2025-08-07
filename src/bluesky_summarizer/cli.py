@@ -543,6 +543,182 @@ def status():
 
 
 @cli.command()
+@click.option(
+    "--poll-interval",
+    "-i",
+    default=30,
+    type=int,
+    help="Polling interval in seconds (default: 30)",
+)
+@click.option(
+    "--users",
+    "-u",
+    multiple=True,
+    help="Specific user handles to follow (can be used multiple times)",
+)
+@click.option(
+    "--keywords",
+    "-k",
+    multiple=True,
+    help="Keywords to filter posts (can be used multiple times)",
+)
+@click.option(
+    "--stats-interval",
+    "-s",
+    default=300,
+    type=int,
+    help="How often to display stats in seconds (default: 300)",
+)
+def stream(poll_interval: int, users: tuple, keywords: tuple, stats_interval: int):
+    """Start live streaming service to continuously monitor Bluesky for new posts."""
+
+    try:
+        from .streaming import StreamingService
+
+        # Convert tuples to sets
+        user_handles = set(users) if users else None
+        keyword_set = set(keywords) if keywords else None
+
+        console.print("[blue]🚀 Starting Bluesky streaming service...[/blue]")
+
+        # Display configuration
+        config_table = Table(title="Streaming Configuration")
+        config_table.add_column("Setting", style="cyan")
+        config_table.add_column("Value", style="green")
+
+        config_table.add_row("Poll Interval", f"{poll_interval} seconds")
+        config_table.add_row("Stats Interval", f"{stats_interval} seconds")
+        config_table.add_row("Database Path", config.database.path)
+
+        if user_handles:
+            config_table.add_row("Following Users", ", ".join(user_handles))
+        else:
+            config_table.add_row("Following Users", "All users (timeline)")
+
+        if keyword_set:
+            config_table.add_row("Keyword Filters", ", ".join(keyword_set))
+        else:
+            config_table.add_row("Keyword Filters", "None (all posts)")
+
+        console.print(config_table)
+        console.print()
+
+        # Create and start the streaming service
+        with StreamingService(
+            user_handles=user_handles,
+            keywords=keyword_set,
+            poll_interval=poll_interval,
+        ) as service:
+            console.print(
+                "[green]✅ Streaming service started! Press Ctrl+C to stop.[/green]"
+            )
+            console.print()
+
+            # Start the service in a background thread
+            import threading
+            import time
+
+            service_thread = threading.Thread(target=service.start, daemon=True)
+            service_thread.start()
+
+            # Wait a moment for service to start
+            time.sleep(2)
+
+            # Display stats periodically
+            last_stats_time = time.time()
+
+            try:
+                while service.is_running:
+                    current_time = time.time()
+
+                    # Display stats at interval
+                    if current_time - last_stats_time >= stats_interval:
+                        stats = service.get_stats()
+
+                        stats_table = Table(title="Streaming Statistics")
+                        stats_table.add_column("Metric", style="cyan")
+                        stats_table.add_column("Value", style="green")
+
+                        stats_table.add_row(
+                            "Status",
+                            "🟢 Running" if stats["is_running"] else "🔴 Stopped",
+                        )
+
+                        if stats["runtime_seconds"]:
+                            runtime_str = f"{stats['runtime_seconds']:.1f} seconds"
+                            if stats["runtime_seconds"] > 60:
+                                minutes = stats["runtime_seconds"] // 60
+                                seconds = stats["runtime_seconds"] % 60
+                                runtime_str = f"{minutes:.0f}m {seconds:.0f}s"
+                        else:
+                            runtime_str = "N/A"
+
+                        stats_table.add_row("Runtime", runtime_str)
+                        stats_table.add_row(
+                            "Posts Processed", str(stats["posts_processed"])
+                        )
+                        stats_table.add_row("Posts Saved", str(stats["posts_saved"]))
+                        stats_table.add_row(
+                            "Processing Rate",
+                            f"{stats['posts_per_minute']:.1f} posts/min",
+                        )
+
+                        if stats["last_check"]:
+                            last_check_str = stats["last_check"].strftime("%H:%M:%S")
+                        else:
+                            last_check_str = "Never"
+
+                        stats_table.add_row("Last Check", last_check_str)
+
+                        console.print(stats_table)
+                        console.print()
+
+                        last_stats_time = current_time
+
+                    time.sleep(1)
+
+            except KeyboardInterrupt:
+                console.print(
+                    "\n[yellow]📡 Received stop signal, shutting down streaming service...[/yellow]"
+                )
+                service.stop()
+
+            # Wait for service thread to finish
+            service_thread.join(timeout=10)
+
+            # Display final stats
+            final_stats = service.get_stats()
+
+            final_table = Table(title="Final Streaming Results")
+            final_table.add_column("Metric", style="cyan")
+            final_table.add_column("Value", style="green")
+
+            if final_stats["runtime_seconds"]:
+                runtime_str = f"{final_stats['runtime_seconds']:.1f} seconds"
+                if final_stats["runtime_seconds"] > 60:
+                    minutes = final_stats["runtime_seconds"] // 60
+                    seconds = final_stats["runtime_seconds"] % 60
+                    runtime_str = f"{minutes:.0f}m {seconds:.0f}s"
+            else:
+                runtime_str = "N/A"
+
+            final_table.add_row("Total Runtime", runtime_str)
+            final_table.add_row("Posts Processed", str(final_stats["posts_processed"]))
+            final_table.add_row("Posts Saved", str(final_stats["posts_saved"]))
+            final_table.add_row(
+                "Average Rate", f"{final_stats['posts_per_minute']:.1f} posts/min"
+            )
+
+            console.print(final_table)
+            console.print("[green]✅ Streaming service stopped successfully.[/green]")
+
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        logger.exception("Error in stream command")
+        sys.exit(1)
+
+
+@cli.command()
 def verify():
     """Verify database integrity and check for duplicate posts."""
 
