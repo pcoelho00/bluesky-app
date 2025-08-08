@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from typing import List
 from anthropic import Anthropic
 from ..database.models import Post, Summary
+from ..config import config
 
 
 logger = logging.getLogger(__name__)
@@ -51,12 +52,13 @@ class ClaudeSummarizer:
                 created_at=datetime.now(timezone.utc),
             )
 
-        # Prepare posts text for summarization
-        posts_text = self._format_posts_for_summarization(posts)
+        # Apply truncation based on max_prompt_chars
+        truncated_posts = self._truncate_posts(posts, config.app.max_prompt_chars)
+        posts_text = self._format_posts_for_summarization(truncated_posts)
 
         # Create the prompt
         prompt = self._create_summarization_prompt(
-            posts_text, start_date, end_date, len(posts)
+            posts_text, start_date, end_date, len(truncated_posts)
         )
 
         try:
@@ -70,13 +72,18 @@ class ClaudeSummarizer:
 
             summary_text = response.content[0].text
 
-            logger.info(f"Generated summary for {len(posts)} posts using {self.model}")
+            logger.info(
+                "Generated summary for %s posts (original %s) using %s",
+                len(truncated_posts),
+                len(posts),
+                self.model,
+            )
 
             return Summary(
                 id=None,
                 start_date=start_date,
                 end_date=end_date,
-                post_count=len(posts),
+                post_count=len(truncated_posts),
                 summary_text=summary_text,
                 model_used=self.model,
                 created_at=datetime.now(timezone.utc),
@@ -102,6 +109,47 @@ Content: {post.text}
             formatted_posts.append(post_text)
 
         return "\n".join(formatted_posts)
+
+    def _truncate_posts(self, posts: List[Post], max_chars: int) -> List[Post]:
+        """Truncate posts list to fit within character budget when formatted.
+
+        Strategy:
+          1. Sort by engagement (likes + reposts + replies) descending, then recency.
+          2. Keep adding formatted length until budget would be exceeded.
+          3. Fall back to chronological if all have zero engagement.
+        """
+        if not posts:
+            return posts
+        scored = []
+        for p in posts:
+            engagement = p.like_count + p.repost_count + p.reply_count
+            scored.append((engagement, p.created_at, p))
+        # If all engagement zero, just chronological
+        if all(s[0] == 0 for s in scored):
+            ordered = [p for _, _, p in sorted(scored, key=lambda x: x[1])]
+        else:
+            ordered = [
+                p
+                for _, _, p in sorted(scored, key=lambda x: (-x[0], -x[1].timestamp()))
+            ]
+        selected: List[Post] = []
+        total_chars = 0
+        for cand in ordered:
+            frag = self._format_posts_for_summarization([cand])
+            frag_len = len(frag) + 1  # newline buffer
+            if total_chars + frag_len > max_chars and selected:
+                break
+            if frag_len > max_chars and not selected:
+                # Single oversize post: truncate its text
+                truncated_text = (
+                    cand.text[: max(0, max_chars - 200)] + "…"
+                )  # keep some metadata room
+                cand = cand.model_copy(update={"text": truncated_text})
+                selected.append(cand)
+                break
+            selected.append(cand)
+            total_chars += frag_len
+        return selected
 
     def _create_summarization_prompt(
         self, posts_text: str, start_date: datetime, end_date: datetime, post_count: int

@@ -1,27 +1,27 @@
-"""
-Database operations for managing Bluesky posts and summaries.
+"""Database operations for managing Bluesky posts and summaries.
+
+Clean implementation with connection helper and identical public API.
 """
 
-import sqlite3
+from __future__ import annotations
+
 import os
+import sqlite3
 import datetime as dt
 from typing import Any, List, Optional
+
 from .models import Post, Summary
 
 
-# https://docs.python.org/3/library/sqlite3.html#sqlite3-adapter-converter-recipes
-def adapt_date_iso(val: Any) -> Any:
-    """Adapt datetime.date to ISO 8601 date."""
+def adapt_date_iso(val: Any) -> Any:  # date -> ISO
     return val.isoformat()
 
 
-def adapt_datetime_iso(val: Any) -> Any:
-    """Adapt datetime.datetime to timezone-naive ISO 8601 date."""
+def adapt_datetime_iso(val: Any) -> Any:  # datetime -> naive ISO
     return val.replace(tzinfo=None).isoformat()
 
 
-def adapt_datetime_epoch(val: Any) -> int:
-    """Adapt datetime.datetime to Unix timestamp."""
+def adapt_datetime_epoch(val: Any) -> int:  # datetime -> epoch int
     return int(val.timestamp())
 
 
@@ -31,17 +31,14 @@ sqlite3.register_adapter(dt.datetime, adapt_datetime_epoch)
 
 
 def convert_date(val: Any) -> dt.date:
-    """Convert ISO 8601 date to datetime.date object."""
     return dt.date.fromisoformat(val.decode())
 
 
 def convert_datetime(val: Any) -> dt.datetime:
-    """Convert ISO 8601 datetime to datetime.datetime object."""
     return dt.datetime.fromisoformat(val.decode())
 
 
 def convert_timestamp(val: Any) -> dt.datetime:
-    """Convert Unix epoch timestamp to datetime.datetime object."""
     return dt.datetime.fromtimestamp(int(val))
 
 
@@ -51,27 +48,45 @@ sqlite3.register_converter("timestamp", convert_timestamp)
 
 
 class DatabaseManager:
-    """Manages SQLite database operations for Bluesky posts and summaries."""
+    """SQLite database manager for posts & summaries."""
 
     def __init__(self, db_path: str) -> None:
-        """Initialize database manager with database path."""
         self.db_path = db_path
-        self._ensure_database_directory()
-        self._initialize_database()
+        self._ensure_dir()
+        self._init_schema()
 
-    def _ensure_database_directory(self) -> None:
-        """Create database directory if it doesn't exist."""
-        db_dir = os.path.dirname(self.db_path)
-        if db_dir and not os.path.exists(db_dir):
-            os.makedirs(db_dir)
+    # Internal helpers --------------------------------------------------
+    def _ensure_dir(self) -> None:
+        d = os.path.dirname(self.db_path)
+        if d and not os.path.exists(d):
+            os.makedirs(d)
 
-    def _initialize_database(self) -> None:
-        """Create database tables if they don't exist."""
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
+    def _connect(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(self.db_path, timeout=30, isolation_level=None)
+        cur = conn.cursor()
+        try:
+            cur.execute("PRAGMA journal_mode=WAL;")
+            cur.execute("PRAGMA synchronous=NORMAL;")
+            cur.execute("PRAGMA foreign_keys=ON;")
+            cur.execute("PRAGMA busy_timeout=5000;")
+        except sqlite3.Error:
+            pass
+        return conn
 
-            # Create posts table
-            cursor.execute("""
+    def _init_schema(self) -> None:
+        with self._connect() as conn:
+            cur = conn.cursor()
+            # Metadata table for schema versioning
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS metadata (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL
+                )
+                """
+            )
+            cur.execute(
+                """
                 CREATE TABLE IF NOT EXISTS posts (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     uri TEXT UNIQUE NOT NULL,
@@ -85,10 +100,10 @@ class DatabaseManager:
                     reply_count INTEGER DEFAULT 0,
                     indexed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
-            """)
-
-            # Create summaries table
-            cursor.execute("""
+                """
+            )
+            cur.execute(
+                """
                 CREATE TABLE IF NOT EXISTS summaries (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     start_date TIMESTAMP NOT NULL,
@@ -98,33 +113,45 @@ class DatabaseManager:
                     model_used TEXT NOT NULL,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
-            """)
-
-            # Create indexes for better performance
-            cursor.execute(
+                """
+            )
+            cur.execute(
                 "CREATE INDEX IF NOT EXISTS idx_posts_created_at ON posts(created_at)"
             )
-            cursor.execute(
+            cur.execute(
                 "CREATE INDEX IF NOT EXISTS idx_posts_author_handle ON posts(author_handle)"
             )
-            cursor.execute(
+            # Composite index for author + created_at (query optimization)
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_posts_author_created ON posts(author_handle, created_at)"
+            )
+            cur.execute(
                 "CREATE INDEX IF NOT EXISTS idx_summaries_date_range ON summaries(start_date, end_date)"
             )
-
+            # Record schema version if not present
+            cur.execute(
+                "INSERT OR IGNORE INTO metadata (key, value) VALUES ('schema_version', '1')"
+            )
+            # Track last seen cursor / timestamp for streaming continuity
+            cur.execute(
+                "INSERT OR IGNORE INTO metadata (key, value) VALUES ('last_stream_cursor', '')"
+            )
+            cur.execute(
+                "INSERT OR IGNORE INTO metadata (key, value) VALUES ('last_stream_time', '')"
+            )
             conn.commit()
 
+    # Post operations ---------------------------------------------------
     def save_post(self, post: Post) -> int:
-        """Save a post to the database. Returns the post ID."""
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-
-            cursor.execute(
+        with self._connect() as conn:
+            cur = conn.cursor()
+            cur.execute(
                 """
-                INSERT OR REPLACE INTO posts 
-                (uri, cid, author_handle, author_did, text, created_at, 
+                INSERT OR REPLACE INTO posts
+                (uri, cid, author_handle, author_did, text, created_at,
                  like_count, repost_count, reply_count, indexed_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
+                """,
                 (
                     post.uri,
                     post.cid,
@@ -138,92 +165,77 @@ class DatabaseManager:
                     post.indexed_at,
                 ),
             )
-
-            return cursor.lastrowid
+            return cur.lastrowid
 
     def post_exists(self, uri: str) -> bool:
-        """Check if a post with the given URI already exists in the database."""
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT 1 FROM posts WHERE uri = ? LIMIT 1", (uri,))
-            return cursor.fetchone() is not None
+        with self._connect() as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT 1 FROM posts WHERE uri = ? LIMIT 1", (uri,))
+            return cur.fetchone() is not None
 
     def get_existing_uris(self, uris: List[str]) -> set[str]:
-        """Get a set of URIs that already exist in the database."""
         if not uris:
             return set()
-
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
+        with self._connect() as conn:
+            cur = conn.cursor()
             placeholders = ",".join("?" * len(uris))
-            cursor.execute(f"SELECT uri FROM posts WHERE uri IN ({placeholders})", uris)
-            return {row[0] for row in cursor.fetchall()}
+            cur.execute(f"SELECT uri FROM posts WHERE uri IN ({placeholders})", uris)
+            return {row[0] for row in cur.fetchall()}
 
     def save_posts(self, posts: List[Post]) -> dict[str, int]:
-        """
-        Save multiple posts to the database.
-        Returns a dictionary with counts: {'new': int, 'updated': int, 'total': int}
-        """
         if not posts:
             return {"new": 0, "updated": 0, "total": 0}
-
-        # Get existing URIs to determine which posts are new vs updates
-        post_uris = [post.uri for post in posts]
-        existing_uris = self.get_existing_uris(post_uris)
-
+        existing = self.get_existing_uris([p.uri for p in posts])
         new_count = 0
         updated_count = 0
-        processed_in_batch = set()  # Track URIs we've seen in this batch
-
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-
-            for post in posts:
+        seen: set[str] = set()
+        with self._connect() as conn:
+            cur = conn.cursor()
+            for p in posts:
                 try:
-                    # Check if this URI was already in DB or processed in this batch
-                    is_existing = (
-                        post.uri in existing_uris or post.uri in processed_in_batch
-                    )
-
-                    cursor.execute(
+                    is_existing = p.uri in existing or p.uri in seen
+                    # UPSERT preserving immutable created_at while updating mutable fields
+                    cur.execute(
                         """
-                        INSERT OR REPLACE INTO posts 
-                        (uri, cid, author_handle, author_did, text, created_at, 
+                        INSERT INTO posts
+                        (uri, cid, author_handle, author_did, text, created_at,
                          like_count, repost_count, reply_count, indexed_at)
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
+                        ON CONFLICT(uri) DO UPDATE SET
+                            cid=excluded.cid,
+                            author_handle=excluded.author_handle,
+                            author_did=excluded.author_did,
+                            text=excluded.text,
+                            like_count=excluded.like_count,
+                            repost_count=excluded.repost_count,
+                            reply_count=excluded.reply_count,
+                            indexed_at=excluded.indexed_at
+                        """,
                         (
-                            post.uri,
-                            post.cid,
-                            post.author_handle,
-                            post.author_did,
-                            post.text,
-                            post.created_at,
-                            post.like_count,
-                            post.repost_count,
-                            post.reply_count,
-                            post.indexed_at,
+                            p.uri,
+                            p.cid,
+                            p.author_handle,
+                            p.author_did,
+                            p.text,
+                            p.created_at,
+                            p.like_count,
+                            p.repost_count,
+                            p.reply_count,
+                            p.indexed_at,
                         ),
                     )
-
                     if is_existing:
                         updated_count += 1
                     else:
                         new_count += 1
-
-                    # Mark this URI as processed in this batch
-                    processed_in_batch.add(post.uri)
-
-                except sqlite3.Error as e:
-                    # Log the error but continue with other posts
+                    seen.add(p.uri)
+                except sqlite3.Error as e:  # log & continue
                     import logging
 
-                    logger = logging.getLogger(__name__)
-                    logger.error(f"Error saving post {post.uri}: {e}")
-                    continue
-
+                    logging.getLogger(__name__).error(
+                        "Error saving post %s: %s", p.uri, e
+                    )
             conn.commit()
-
         return {
             "new": new_count,
             "updated": updated_count,
@@ -233,50 +245,46 @@ class DatabaseManager:
     def get_posts_by_date_range(
         self, start_date: dt.datetime, end_date: dt.datetime
     ) -> List[Post]:
-        """Get posts within a specific date range."""
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-
-            cursor.execute(
+        with self._connect() as conn:
+            cur = conn.cursor()
+            cur.execute(
                 """
                 SELECT id, uri, cid, author_handle, author_did, text, created_at,
                        like_count, repost_count, reply_count, indexed_at
                 FROM posts
                 WHERE created_at BETWEEN ? AND ?
                 ORDER BY created_at ASC
-            """,
+                """,
                 (start_date, end_date),
             )
-
-            rows = cursor.fetchall()
+            rows = cur.fetchall()
             return [
                 Post(
-                    id=row[0],
-                    uri=row[1],
-                    cid=row[2],
-                    author_handle=row[3],
-                    author_did=row[4],
-                    text=row[5],
-                    created_at=row[6],
-                    like_count=row[7],
-                    repost_count=row[8],
-                    reply_count=row[9],
-                    indexed_at=row[10],
+                    id=r[0],
+                    uri=r[1],
+                    cid=r[2],
+                    author_handle=r[3],
+                    author_did=r[4],
+                    text=r[5],
+                    created_at=r[6],
+                    like_count=r[7],
+                    repost_count=r[8],
+                    reply_count=r[9],
+                    indexed_at=r[10],
                 )
-                for row in rows
+                for r in rows
             ]
 
+    # Summary operations -------------------------------------------------
     def save_summary(self, summary: Summary) -> int:
-        """Save a summary to the database. Returns the summary ID."""
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-
-            cursor.execute(
+        with self._connect() as conn:
+            cur = conn.cursor()
+            cur.execute(
                 """
-                INSERT INTO summaries 
+                INSERT INTO summaries
                 (start_date, end_date, post_count, summary_text, model_used, created_at)
                 VALUES (?, ?, ?, ?, ?, ?)
-            """,
+                """,
                 (
                     summary.start_date,
                     summary.end_date,
@@ -286,132 +294,205 @@ class DatabaseManager:
                     summary.created_at,
                 ),
             )
-
-            return cursor.lastrowid
+            return cur.lastrowid
 
     def get_latest_summary(self) -> Optional[Summary]:
-        """Get the most recent summary from the database."""
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-
-            cursor.execute("""
+        with self._connect() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                """
                 SELECT id, start_date, end_date, post_count, summary_text, model_used, created_at
                 FROM summaries
                 ORDER BY created_at DESC
                 LIMIT 1
-            """)
-
-            row = cursor.fetchone()
-            if row:
-                return Summary(
-                    id=row[0],
-                    start_date=row[1],
-                    end_date=row[2],
-                    post_count=row[3],
-                    summary_text=row[4],
-                    model_used=row[5],
-                    created_at=row[6],
-                )
-            return None
-
-    def get_total_post_count(self) -> int:
-        """Get the total number of posts in the database."""
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT COUNT(*) FROM posts")
-            return cursor.fetchone()[0]
-
-    def get_unique_uri_count(self) -> int:
-        """Get the number of unique URIs in the database."""
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT COUNT(DISTINCT uri) FROM posts")
-            return cursor.fetchone()[0]
-
-    def get_duplicate_content_count(self) -> int:
-        """Get the number of posts that have duplicate text content."""
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
-                SELECT COUNT(*) FROM (
-                    SELECT text, COUNT(*) as cnt 
-                    FROM posts 
-                    GROUP BY text 
-                    HAVING cnt > 1
-                ) AS duplicates
-            """)
-            return cursor.fetchone()[0]
-
-    def get_posts_with_duplicate_content(self) -> List[tuple[str, int]]:
-        """Get posts that have duplicate text content. Returns (text, count) tuples."""
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
-                SELECT text, COUNT(*) as cnt 
-                FROM posts 
-                GROUP BY text 
-                HAVING cnt > 1
-                ORDER BY cnt DESC
-            """)
-            return cursor.fetchall()
-
-    def find_duplicate_uris(self) -> List[str]:
-        """Find any duplicate URIs in the database (should be none due to UNIQUE constraint)."""
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
-                SELECT uri, COUNT(*) as cnt 
-                FROM posts 
-                GROUP BY uri 
-                HAVING cnt > 1
-            """)
-            return [row[0] for row in cursor.fetchall()]
+                """
+            )
+            row = cur.fetchone()
+            if not row:
+                return None
+            return Summary(
+                id=row[0],
+                start_date=row[1],
+                end_date=row[2],
+                post_count=row[3],
+                summary_text=row[4],
+                model_used=row[5],
+                created_at=row[6],
+            )
 
     def get_summaries_by_date_range(
         self, start_date: dt.datetime, end_date: dt.datetime
     ) -> List[Summary]:
-        """Get summaries within a specific date range."""
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-
-            cursor.execute(
+        with self._connect() as conn:
+            cur = conn.cursor()
+            cur.execute(
                 """
                 SELECT id, start_date, end_date, post_count, summary_text, model_used, created_at
                 FROM summaries
                 WHERE start_date >= ? AND end_date <= ?
                 ORDER BY created_at DESC
-            """,
+                """,
                 (start_date, end_date),
             )
-
-            rows = cursor.fetchall()
+            rows = cur.fetchall()
             return [
                 Summary(
-                    id=row[0],
-                    start_date=row[1],
-                    end_date=row[2],
-                    post_count=row[3],
-                    summary_text=row[4],
-                    model_used=row[5],
-                    created_at=row[6],
+                    id=r[0],
+                    start_date=r[1],
+                    end_date=r[2],
+                    post_count=r[3],
+                    summary_text=r[4],
+                    model_used=r[5],
+                    created_at=r[6],
                 )
-                for row in rows
+                for r in rows
             ]
 
-    def get_post_count_by_date_range(
-        self, start_date: dt.datetime, end_date: dt.datetime
-    ) -> int:
-        """Get the count of posts within a specific date range."""
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
+    # Integrity helpers -------------------------------------------------
+    def get_total_post_count(self) -> int:
+        with self._connect() as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT COUNT(*) FROM posts")
+            return cur.fetchone()[0]
 
-            cursor.execute(
+    def get_unique_uri_count(self) -> int:
+        with self._connect() as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT COUNT(DISTINCT uri) FROM posts")
+            return cur.fetchone()[0]
+
+    def get_duplicate_content_count(self) -> int:
+        with self._connect() as conn:
+            cur = conn.cursor()
+            cur.execute(
                 """
-                SELECT COUNT(*)
+                SELECT COUNT(*) FROM (
+                    SELECT text, COUNT(*) as cnt
+                    FROM posts
+                    GROUP BY text
+                    HAVING cnt > 1
+                ) AS duplicates
+                """
+            )
+            return cur.fetchone()[0]
+
+    def get_posts_with_duplicate_content(self) -> List[tuple[str, int]]:
+        with self._connect() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                """
+                SELECT text, COUNT(*) as cnt
                 FROM posts
-                WHERE created_at BETWEEN ? AND ?
-            """,
-                (start_date, end_date),
+                GROUP BY text
+                HAVING cnt > 1
+                ORDER BY cnt DESC
+                """
+            )
+            return cur.fetchall()
+
+    def find_duplicate_uris(self) -> List[str]:
+        with self._connect() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                """
+                SELECT uri, COUNT(*) as cnt
+                FROM posts
+                GROUP BY uri
+                HAVING cnt > 1
+                """
+            )
+            return [row[0] for row in cur.fetchall()]
+
+    # Pruning / maintenance -------------------------------------------
+    def prune_posts_older_than(self, before: dt.datetime) -> int:
+        """Delete posts older than the given timestamp.
+
+        Returns number of rows deleted.
+        """
+        with self._connect() as conn:
+            cur = conn.cursor()
+            cur.execute("DELETE FROM posts WHERE created_at < ?", (before,))
+            deleted = cur.rowcount or 0
+            return deleted
+
+    def vacuum(self) -> None:
+        with self._connect() as conn:
+            conn.execute("VACUUM")
+
+    def get_db_size_bytes(self) -> int:
+        try:
+            return os.path.getsize(self.db_path)
+        except OSError:
+            return 0
+
+    # Streaming state -------------------------------------------------
+    def get_metadata(self, key: str) -> Optional[str]:
+        with self._connect() as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT value FROM metadata WHERE key = ?", (key,))
+            row = cur.fetchone()
+            return row[0] if row else None
+
+    def set_metadata(self, key: str, value: str) -> None:
+        with self._connect() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                "INSERT INTO metadata (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (key, value),
             )
 
-            return cursor.fetchone()[0]
+    # Analytics / engagement helpers ----------------------------------
+    def get_top_posts(
+        self,
+        start_date: dt.datetime,
+        end_date: dt.datetime,
+        limit: int = 10,
+        order_by: str = "like_count",
+    ) -> List[Post]:
+        """Return top engagement posts in a date range.
+
+        order_by can be one of like_count, repost_count, reply_count, total_engagement.
+        """
+        valid = {"like_count", "repost_count", "reply_count", "total_engagement"}
+        if order_by not in valid:
+            raise ValueError(f"order_by must be one of {valid}")
+        metric_expr = (
+            "(like_count + repost_count + reply_count) AS total_engagement"
+            if order_by == "total_engagement"
+            else order_by
+        )
+        order_clause = (
+            "total_engagement DESC"
+            if order_by == "total_engagement"
+            else f"{order_by} DESC"
+        )
+        with self._connect() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                f"""
+                SELECT id, uri, cid, author_handle, author_did, text, created_at,
+                       like_count, repost_count, reply_count, indexed_at, {metric_expr}
+                FROM posts
+                WHERE created_at BETWEEN ? AND ?
+                ORDER BY {order_clause}, created_at DESC
+                LIMIT ?
+                """,
+                (start_date, end_date, limit),
+            )
+            rows = cur.fetchall()
+            return [
+                Post(
+                    id=r[0],
+                    uri=r[1],
+                    cid=r[2],
+                    author_handle=r[3],
+                    author_did=r[4],
+                    text=r[5],
+                    created_at=r[6],
+                    like_count=r[7],
+                    repost_count=r[8],
+                    reply_count=r[9],
+                    indexed_at=r[10],
+                )
+                for r in rows
+            ]

@@ -40,6 +40,16 @@ class AppConfig(BaseModel):
     max_posts_per_fetch: int = Field(
         default=100, description="Maximum number of posts to fetch per request"
     )
+    max_prompt_chars: int = Field(
+        default=20000,
+        description="Hard cap on characters included in a single summarization prompt (prevents token overflow)",
+    )
+    api_retry_attempts: int = Field(
+        default=3, description="Number of retry attempts for external API calls"
+    )
+    api_retry_base_delay: float = Field(
+        default=0.5, description="Base delay (seconds) for external API retry backoff"
+    )
 
 
 class Config:
@@ -60,6 +70,9 @@ class Config:
         self.app = AppConfig(
             default_days_back=int(os.getenv("DEFAULT_DAYS_BACK", "1")),
             max_posts_per_fetch=int(os.getenv("MAX_POSTS_PER_FETCH", "100")),
+            max_prompt_chars=int(os.getenv("MAX_PROMPT_CHARS", "20000")),
+            api_retry_attempts=int(os.getenv("API_RETRY_ATTEMPTS", "3")),
+            api_retry_base_delay=float(os.getenv("API_RETRY_BASE_DELAY", "0.5")),
         )
 
     def _get_env_var(self, var_name: str) -> str:

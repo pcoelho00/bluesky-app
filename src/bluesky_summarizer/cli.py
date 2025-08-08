@@ -4,7 +4,7 @@ Command Line Interface for the Bluesky Feed Summarizer.
 
 import logging
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from typing import Optional
 
 import click
@@ -14,6 +14,7 @@ from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, TextColumn
 
 from .config import config
+from .utils.dates import resolve_date_range
 from .database import DatabaseManager
 from .bluesky import BlueSkyClient
 from .ai import ClaudeSummarizer
@@ -144,6 +145,52 @@ def cli(verbose: bool):
 
 @cli.command()
 @click.option(
+    "--older-than-days",
+    "-d",
+    type=int,
+    required=True,
+    help="Delete posts older than this many days",
+)
+@click.option(
+    "--vacuum/--no-vacuum",
+    default=True,
+    help="Run VACUUM after pruning to reclaim space (default: True)",
+)
+def prune(older_than_days: int, vacuum: bool):
+    """Prune (delete) posts older than the specified number of days."""
+    try:
+        if older_than_days <= 0:
+            raise click.BadParameter("older-than-days must be positive")
+
+        cutoff = datetime.utcnow() - timedelta(days=older_than_days)
+        db_manager = DatabaseManager(config.database.path)
+        deleted = db_manager.prune_posts_older_than(cutoff)
+        after_count = db_manager.get_total_post_count()
+
+        if vacuum and deleted > 0:
+            db_manager.vacuum()
+        size_bytes = db_manager.get_db_size_bytes()
+
+        result_table = Table(title="Prune Results")
+        result_table.add_column("Metric", style="cyan")
+        result_table.add_column("Value", style="green")
+        result_table.add_row("Cutoff", cutoff.strftime("%Y-%m-%d %H:%M:%S UTC"))
+        result_table.add_row("Deleted Posts", str(deleted))
+        result_table.add_row("Remaining Posts", str(after_count))
+        result_table.add_row("Database Size (KB)", f"{size_bytes / 1024:.1f}")
+        result_table.add_row(
+            "Vacuum Performed", "Yes" if vacuum and deleted > 0 else "No"
+        )
+        console.print(result_table)
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        logger.exception("Error in prune command")
+        sys.exit(1)
+    # No return value needed
+
+
+@cli.command()
+@click.option(
     "--days",
     "-d",
     default=None,
@@ -172,17 +219,12 @@ def fetch(
     """Fetch posts from Bluesky timeline and save to database."""
 
     try:
-        # Determine date range
-        if start_date and end_date:
-            fetch_start = start_date
-            fetch_end = end_date
-        elif days:
-            fetch_end = datetime.now(timezone.utc)
-            fetch_start = fetch_end - timedelta(days=days)
-        else:
-            fetch_end = datetime.now(timezone.utc)
-            fetch_start = fetch_end - timedelta(days=config.app.default_days_back)
-
+        fetch_start, fetch_end = resolve_date_range(
+            start=start_date,
+            end=end_date,
+            days=days,
+            default_days_back=config.app.default_days_back,
+        )
         _fetch_posts_logic(fetch_start, fetch_end, limit)
 
     except Exception as e:
@@ -224,17 +266,12 @@ def summarize(
     """Generate AI summary of posts in the database."""
 
     try:
-        # Determine date range
-        if start_date and end_date:
-            summary_start = start_date
-            summary_end = end_date
-        elif days:
-            summary_end = datetime.now(timezone.utc)
-            summary_start = summary_end - timedelta(days=days)
-        else:
-            summary_end = datetime.now(timezone.utc)
-            summary_start = summary_end - timedelta(days=config.app.default_days_back)
-
+        summary_start, summary_end = resolve_date_range(
+            start=start_date,
+            end=end_date,
+            days=days,
+            default_days_back=config.app.default_days_back,
+        )
         _summarize_posts_logic(summary_start, summary_end, model, save)
 
     except Exception as e:
@@ -284,16 +321,12 @@ def run(
     )
 
     try:
-        # Determine date range
-        if start_date and end_date:
-            process_start = start_date
-            process_end = end_date
-        elif days:
-            process_end = datetime.now(timezone.utc)
-            process_start = process_end - timedelta(days=days)
-        else:
-            process_end = datetime.now(timezone.utc)
-            process_start = process_end - timedelta(days=config.app.default_days_back)
+        process_start, process_end = resolve_date_range(
+            start=start_date,
+            end=end_date,
+            days=days,
+            default_days_back=config.app.default_days_back,
+        )
 
         # Run fetch
         console.print("\n[bold]Step 1: Fetching posts[/bold]")
@@ -374,24 +407,12 @@ def posts(
     """Display saved posts from the database in chronological order."""
 
     try:
-        # Determine date range
-        if start_date and end_date:
-            query_start = (
-                start_date.replace(tzinfo=timezone.utc)
-                if start_date.tzinfo is None
-                else start_date
-            )
-            query_end = (
-                end_date.replace(tzinfo=timezone.utc)
-                if end_date.tzinfo is None
-                else end_date
-            )
-        elif days:
-            query_end = datetime.now(timezone.utc)
-            query_start = query_end - timedelta(days=days)
-        else:
-            query_end = datetime.now(timezone.utc)
-            query_start = query_end - timedelta(days=config.app.default_days_back)
+        query_start, query_end = resolve_date_range(
+            start=start_date,
+            end=end_date,
+            days=days,
+            default_days_back=config.app.default_days_back,
+        )
 
         console.print(
             f"[blue]Loading posts from {query_start.date()} to {query_end.date()}[/blue]"

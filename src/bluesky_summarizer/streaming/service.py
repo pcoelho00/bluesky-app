@@ -6,8 +6,6 @@ and updates the database in real-time using periodic polling.
 """
 
 import logging
-import signal
-import sys
 import threading
 from datetime import datetime, timezone, timedelta
 from typing import Optional, Set, Dict, Any
@@ -40,17 +38,8 @@ class StreamingService:
         bluesky_handle: Optional[str] = None,
         bluesky_password: Optional[str] = None,
     ):
-        """
-        Initialize the streaming service.
-
-        Args:
-            db_manager: Database manager instance (creates default if None)
-            user_handles: Set of user handles to follow (follows timeline if None)
-            keywords: Set of keywords to filter posts (no filtering if None)
-            poll_interval: Seconds between polling for new posts
-            bluesky_handle: Bluesky handle for authentication
-            bluesky_password: Bluesky password for authentication
-        """
+        """Initialize the streaming service and its internal state."""
+        # Core config
         self.db_manager = db_manager or DatabaseManager(config.database.path)
         self.user_handles = user_handles or set()
         self.keywords = keywords or set()
@@ -70,29 +59,33 @@ class StreamingService:
         self.last_check = None
         self._stats_lock = Lock()
         self._stop_event = threading.Event()
+
+        # Thread / worker state
         self._worker_thread = None
 
-        # Setup signal handling for graceful shutdown
-        self._setup_signal_handlers()
+        # Error/backoff state
+        self._consecutive_errors = 0
+        self._max_backoff = 300  # seconds
+        self._base_backoff = 2
 
-    def _setup_signal_handlers(self):
-        """Setup signal handlers for graceful shutdown."""
+        # Streaming continuity state (persisted in metadata)
+        self._last_cursor = None
+        self._last_stream_time = None
 
-        def signal_handler(signum, frame):
-            logger.info(f"Received signal {signum}, shutting down gracefully...")
-            self.stop()
-            sys.exit(0)
-
-        signal.signal(signal.SIGINT, signal_handler)
-        signal.signal(signal.SIGTERM, signal_handler)
+    # Removed in-library signal handling; caller manages signals.
 
     def _authenticate(self) -> bool:
         """Authenticate with Bluesky API."""
         try:
-            self.client.login(self.bluesky_handle, self.bluesky_password)
-            self._authenticated = True
-            logger.info(f"Successfully authenticated as {self.bluesky_handle}")
-            return True
+            success = self.client.login(self.bluesky_handle, self.bluesky_password)
+            if success:
+                self._authenticated = True
+                logger.info(f"Successfully authenticated as {self.bluesky_handle}")
+                return True
+            else:
+                logger.error("Authentication failed: login returned False")
+                self._authenticated = False
+                return False
         except Exception as e:
             logger.error(f"Authentication failed: {e}")
             self._authenticated = False
@@ -133,17 +126,28 @@ class StreamingService:
                 return []
 
         try:
-            # Calculate time range - check posts from last poll interval + buffer
+            # Determine window using last_stream_time if available
             end_time = datetime.now(timezone.utc)
-            start_time = end_time - timedelta(seconds=self.poll_interval * 2)
 
-            if self.last_check:
-                start_time = max(start_time, self.last_check - timedelta(minutes=1))
+            # Use a more lenient time window for continuous streaming
+            if self._last_stream_time:
+                # Use a longer lookback window to ensure we don't miss posts
+                # Look back at least poll_interval * 3 or 5 minutes, whichever is longer
+                lookback_seconds = max(
+                    self.poll_interval * 3, 300
+                )  # At least 5 minutes
+                start_time = end_time - timedelta(seconds=lookback_seconds)
+            else:
+                # Initial fetch: look back poll_interval * 2
+                start_time = end_time - timedelta(seconds=self.poll_interval * 2)
 
             # Fetch timeline posts
+            # For streaming, we want the latest posts each time, not pagination
+            # So we don't use cursor for continuous fetching
             response = self.client.get_timeline(
                 algorithm="reverse-chronological",
-                limit=50,  # Limit to recent posts
+                limit=50,
+                cursor=None,  # Always get latest posts for streaming
             )
 
             posts = []
@@ -195,6 +199,9 @@ class StreamingService:
                 )
 
                 posts.append(post_obj)
+                # Track most recent seen time
+                if (not self._last_stream_time) or created_at > self._last_stream_time:
+                    self._last_stream_time = created_at
 
             return posts
 
@@ -209,7 +216,22 @@ class StreamingService:
         while not self._stop_event.is_set():
             try:
                 # Fetch recent posts
-                posts = self._fetch_recent_posts()
+                try:
+                    posts = self._fetch_recent_posts()
+                    self._consecutive_errors = 0
+                except Exception:
+                    self._consecutive_errors += 1
+                    backoff = min(
+                        self._max_backoff,
+                        self._base_backoff * (2 ** (self._consecutive_errors - 1)),
+                    )
+                    logger.warning(
+                        "Fetch error count=%s; backing off %.1fs",
+                        self._consecutive_errors,
+                        backoff,
+                    )
+                    self._stop_event.wait(backoff)
+                    continue
 
                 if posts:
                     # Save to database
@@ -220,16 +242,30 @@ class StreamingService:
                             self.posts_saved += result["new"]
                         logger.info(f"Saved {result['new']} new posts")
 
-                # Update last check time
-                self.last_check = datetime.now(timezone.utc)
+                # Update last check time & persist stream state
+                now = datetime.now(timezone.utc)
+                self.last_check = now
+                try:
+                    if posts:
+                        # Save last stream time for continuity
+                        if self._last_stream_time:
+                            self.db_manager.set_metadata(
+                                "last_stream_time", self._last_stream_time.isoformat()
+                            )
+                except Exception as e:
+                    logger.debug(f"Could not persist stream metadata: {e}")
 
                 # Wait for next poll or stop event
                 self._stop_event.wait(self.poll_interval)
 
             except Exception as e:
                 logger.error(f"Error in worker loop: {e}")
-                # Wait a bit before retrying
-                self._stop_event.wait(min(self.poll_interval, 60))
+                self._consecutive_errors += 1
+                backoff = min(
+                    self._max_backoff,
+                    self._base_backoff * (2 ** (self._consecutive_errors - 1)),
+                )
+                self._stop_event.wait(backoff)
 
     def get_stats(self) -> Dict[str, Any]:
         """
@@ -260,6 +296,9 @@ class StreamingService:
                     "user_handles": list(self.user_handles),
                     "keywords": list(self.keywords),
                 },
+                "error_streak": self._consecutive_errors,
+                "last_stream_time": self._last_stream_time,
+                "last_cursor": self._last_cursor,
             }
 
     def start(self):
@@ -286,10 +325,31 @@ class StreamingService:
         if not self.user_handles and not self.keywords:
             logger.info("Processing timeline posts (no specific filters applied)")
 
-        # Authenticate
-        if not self._authenticate():
+        # Authenticate with retry/backoff
+        auth_attempts = 0
+        while auth_attempts < 3 and not self._authenticate():
+            auth_attempts += 1
+            wait_for = min(30, 2**auth_attempts)
+            logger.warning(
+                "Authentication attempt %s failed; retrying in %ss",
+                auth_attempts,
+                wait_for,
+            )
+            time.sleep(wait_for)
+        if not self._authenticated:
             self.is_running = False
-            raise RuntimeError("Failed to authenticate with Bluesky")
+            raise RuntimeError("Failed to authenticate with Bluesky after retries")
+
+        # Load previous stream time if exists
+        try:
+            prev_time = self.db_manager.get_metadata("last_stream_time")
+            if prev_time:
+                self._last_stream_time = datetime.fromisoformat(prev_time)
+            prev_cursor = self.db_manager.get_metadata("last_stream_cursor")
+            if prev_cursor:
+                self._last_cursor = prev_cursor
+        except Exception:
+            pass
 
         try:
             # Start worker thread

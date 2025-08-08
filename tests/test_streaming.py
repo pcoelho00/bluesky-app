@@ -376,12 +376,14 @@ class TestStreamingService:
         assert service.is_running is False
 
     def test_signal_handler_setup(self, mock_db_manager):
-        """Test that signal handlers are set up correctly."""
+        """Test that streaming service initializes without signal handlers (caller manages signals)."""
         with patch("signal.signal") as mock_signal:
-            StreamingService(db_manager=mock_db_manager)
+            service = StreamingService(db_manager=mock_db_manager)
 
-            # Should have set up signal handlers
-            assert mock_signal.call_count >= 2  # SIGINT and SIGTERM
+            # Signal handlers should NOT be set up (caller manages signals)
+            assert mock_signal.call_count == 0
+            assert hasattr(service, "db_manager")
+            assert hasattr(service, "_stop_event")
 
 
 class TestStreamingServiceIntegration:
