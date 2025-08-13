@@ -24,11 +24,30 @@ class AnthropicConfig(BaseModel):
 
 
 class DatabaseConfig(BaseModel):
-    """Configuration for SQLite database."""
+    """Configuration for database connection."""
 
+    # For local SQLite
     path: str = Field(
         default="./data/bluesky_feed.db", description="Path to SQLite database file"
     )
+
+    # For Turso (production)
+    url: str = Field(
+        default="", description="Turso database URL (e.g., libsql://your-db.turso.io)"
+    )
+    auth_token: str = Field(default="", description="Turso authentication token")
+
+    # Environment mode
+    environment: str = Field(
+        default="local", description="Database environment: 'local' or 'production'"
+    )
+
+    @property
+    def is_turso(self) -> bool:
+        """Check if using Turso instead of local SQLite."""
+        return self.environment == "production" and bool(
+            self.url and self.url.startswith(("libsql://", "https://"))
+        )
 
 
 class AppConfig(BaseModel):
@@ -64,7 +83,10 @@ class Config:
         self.anthropic = AnthropicConfig(api_key=self._get_env_var("ANTHROPIC_API_KEY"))
 
         self.database = DatabaseConfig(
-            path=os.getenv("DATABASE_PATH", "./data/bluesky_feed.db")
+            path=os.getenv("DATABASE_PATH", "./data/bluesky_feed.db"),
+            url=os.getenv("TURSO_DATABASE_URL", ""),
+            auth_token=os.getenv("TURSO_AUTH_TOKEN", ""),
+            environment=os.getenv("DB_ENVIRONMENT", "local"),
         )
 
         self.app = AppConfig(
@@ -86,6 +108,50 @@ class Config:
 def get_config() -> Config:
     """Get the application configuration."""
     return Config()
+
+
+def set_database_environment(environment: str) -> None:
+    """Set the database environment in .env file.
+
+    Args:
+        environment: Either 'local' or 'production'
+    """
+    if environment not in ["local", "production"]:
+        raise ValueError("Environment must be either 'local' or 'production'")
+
+    # Read current .env file
+    env_file = ".env"
+    env_lines = []
+
+    if os.path.exists(env_file):
+        with open(env_file, "r") as f:
+            env_lines = f.readlines()
+
+    # Update or add DB_ENVIRONMENT
+    found = False
+    for i, line in enumerate(env_lines):
+        if line.strip().startswith("DB_ENVIRONMENT="):
+            env_lines[i] = f"DB_ENVIRONMENT={environment}\n"
+            found = True
+            break
+
+    if not found:
+        env_lines.append(f"DB_ENVIRONMENT={environment}\n")
+
+    # Write back to .env file
+    with open(env_file, "w") as f:
+        f.writelines(env_lines)
+
+    # Update current environment variable
+    os.environ["DB_ENVIRONMENT"] = environment
+
+    # Reload dotenv to ensure changes are picked up
+    load_dotenv(override=True)
+
+
+def get_database_environment() -> str:
+    """Get the current database environment."""
+    return os.getenv("DB_ENVIRONMENT", "local")
 
 
 # For backwards compatibility, create a lazy config object
