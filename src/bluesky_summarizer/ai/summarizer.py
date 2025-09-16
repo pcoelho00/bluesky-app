@@ -7,7 +7,11 @@ from datetime import datetime, timezone
 from typing import List
 from anthropic import Anthropic
 from ..database.models import Post, Summary
-from ..config import config
+
+try:
+    from ..config import config  # type: ignore
+except Exception:  # pragma: no cover
+    config = None  # type: ignore
 
 
 logger = logging.getLogger(__name__)
@@ -53,7 +57,13 @@ class ClaudeSummarizer:
             )
 
         # Apply truncation based on max_prompt_chars
-        truncated_posts = self._truncate_posts(posts, config.app.max_prompt_chars)
+        max_chars = 20000
+        try:
+            if config and getattr(config, "app", None):
+                max_chars = config.app.max_prompt_chars
+        except Exception:
+            pass
+        truncated_posts = self._truncate_posts(posts, max_chars)
         posts_text = self._format_posts_for_summarization(truncated_posts)
 
         # Create the prompt

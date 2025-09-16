@@ -28,7 +28,7 @@ def run_tests():
 
         # Test local environment
         config = DatabaseConfig(
-            path="./test.db",
+            db_path="./test.db",
             url="libsql://test.turso.io",
             auth_token="token123",
             environment="local",
@@ -37,7 +37,7 @@ def run_tests():
 
         # Test production environment
         config = DatabaseConfig(
-            path="./test.db",
+            db_path="./test.db",
             url="libsql://test.turso.io",
             auth_token="token123",
             environment="production",
@@ -99,7 +99,7 @@ def run_tests():
         from bluesky_summarizer.config import DatabaseConfig
 
         # Test local database creation
-        config = DatabaseConfig(path="./test_factory.db", environment="local")
+        config = DatabaseConfig(db_path="./test_factory.db", environment="local")
 
         manager = create_database_manager(config)
         assert isinstance(manager, DatabaseManager), (
@@ -119,7 +119,7 @@ def run_tests():
     print("\n🖥️  Testing CLI imports...")
     try:
         # Test that CLI functions can be imported
-        import db_env_cli
+        import bluesky_summarizer.db_env_cli as db_env_cli
 
         assert hasattr(db_env_cli, "db_switch"), "CLI should have db_switch function"
         assert hasattr(db_env_cli, "db_status"), "CLI should have db_status function"

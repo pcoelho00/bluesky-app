@@ -1,10 +1,10 @@
-# Using Turso Database
+# Using Turso (libSQL) Database
 
-This guide explains how to configure your Bluesky Feed Summarizer to use Turso instead of local SQLite.
+This guide explains how to configure your Bluesky Feed Summarizer to use Turso. Turso/libSQL is the only supported database backend for this project.
 
 ## What is Turso?
 
-Turso is a distributed SQLite database service that provides:
+Turso is a distributed SQLite-compatible database service that provides:
 - Global edge locations for low latency
 - Built-in replication
 - Serverless scaling
@@ -41,10 +41,7 @@ Turso is a distributed SQLite database service that provides:
 Update your `.env` file:
 
 ```bash
-# Comment out the local database path
-# DATABASE_PATH=./data/bluesky_feed.db
-
-# Add Turso configuration
+# Turso configuration (required)
 TURSO_DATABASE_URL=libsql://your-database-name.turso.io
 TURSO_AUTH_TOKEN=your-turso-auth-token
 
@@ -75,33 +72,11 @@ python -m bluesky_summarizer status
 
 You should see your Turso database configuration in the output.
 
-## Features
+## What You Get
 
-The Turso integration provides the same API as the local SQLite implementation:
-
-- ✅ All existing CLI commands work unchanged
-- ✅ Automatic schema initialization
-- ✅ Data migration (if moving from local SQLite)
-- ✅ Same performance for typical workloads
-- ✅ Better reliability and backup
-
-## Migrating from Local SQLite
-
-If you have existing data in a local SQLite database, you can migrate it:
-
-1. Export your existing data:
-   ```bash
-   python -m bluesky_summarizer posts --export posts.json
-   ```
-
-2. Update your configuration to use Turso
-
-3. Import the data:
-   ```bash
-   python -m bluesky_summarizer posts --import posts.json
-   ```
-
-Note: You'll need to implement the export/import functionality if it doesn't exist yet.
+- ✅ All CLI commands work with Turso out of the box
+- ✅ Automatic schema initialization on first run
+- ✅ Managed, globally distributed database
 
 ## Cost Considerations
 
@@ -121,8 +96,7 @@ For a typical Bluesky feed summarizer usage, the free tier should be sufficient.
 
 ### Performance
 - Turso has edge locations worldwide for low latency
-- Initial connection might be slower than local SQLite
-- Subsequent operations should be fast
+- First connection may be slightly slower due to TLS negotiation; subsequent operations should be fast
 
 ### Debugging
 Enable debug logging to see database operations:

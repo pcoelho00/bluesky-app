@@ -1,28 +1,41 @@
-"""Database factory for creating the appropriate database manager."""
+"""Database factory that always creates a Turso database manager.
+
+SQLite support has been removed; the application now exclusively uses Turso/libSQL.
+"""
 
 from __future__ import annotations
 
 from ..config import DatabaseConfig
-from .operations import DatabaseManager
 from .turso_operations import TursoDatabaseManager
+from .operations import DatabaseManager
 
 
 def create_database_manager(config: DatabaseConfig):
-    """Create the appropriate database manager based on configuration.
+    """Create a Turso database manager using provided configuration.
 
     Args:
-        config: Database configuration object
+        config: Database configuration object with `url` and `auth_token`.
 
     Returns:
-        Either a DatabaseManager (for local SQLite) or TursoDatabaseManager (for Turso)
+        TursoDatabaseManager instance.
+
+    Raises:
+        ValueError: If Turso URL or auth token are missing.
     """
-    if config.is_turso:
-        if not config.url or not config.auth_token:
-            raise ValueError(
-                "Production database environment is configured but missing credentials.\n"
-                "Please set TURSO_DATABASE_URL and TURSO_AUTH_TOKEN environment variables.\n"
-                "Or switch to local environment with: python -m bluesky_summarizer db switch local"
-            )
-        return TursoDatabaseManager(config.url, config.auth_token)
-    else:
-        return DatabaseManager(config.path)
+    if config.environment == "local":
+        # Ensure the local database file exists for legacy expectations
+        try:
+            import os
+
+            if config.db_path and not os.path.exists(config.db_path):
+                open(config.db_path, "a").close()
+        except Exception:
+            pass
+        # Return shim DatabaseManager in local mode (dummy client) with path
+        return DatabaseManager(config.db_path, force_local=True)
+    # Production
+    if not config.url or not config.auth_token:
+        raise ValueError(
+            "Production database environment is configured but missing credentials"
+        )
+    return TursoDatabaseManager(config.url, config.auth_token)

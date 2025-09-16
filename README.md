@@ -2,12 +2,12 @@ Completely written with AI, use at your own risk.
 
 # Bluesky Feed Summarizer
 
-A Python application that reads your Bluesky social media feed and uses Claude AI to generate intelligent daily summaries. The application separates the logic of reading and saving feed data to a SQLite database from the AI summarization functionality, with flexible date range options.
+A Python application that reads your Bluesky social media feed and uses Claude AI to generate intelligent daily summaries. The application stores data in a Turso/libSQL database and cleanly separates data ingestion/storage from AI summarization, with flexible date range options.
 
 ## Features
 
 - 🔄 **Fetch Bluesky Posts**: Automatically retrieve posts from your Bluesky timeline
-- 💾 **SQLite Storage**: Efficiently store posts in a local SQLite database
+- 💾 **Turso/libSQL Storage**: Store posts and summaries in a managed Turso database (libSQL-compatible)
 - 🤖 **AI Summarization**: Generate intelligent summaries using Claude AI
 - 📅 **Flexible Date Ranges**: Specify custom date ranges for fetching and summarizing
 - 🖥️ **CLI Interface**: Easy-to-use command-line interface with rich output
@@ -48,8 +48,9 @@ A Python application that reads your Bluesky social media feed and uses Claude A
    # Claude AI credentials
    ANTHROPIC_API_KEY=your_anthropic_api_key
 
-   # Database settings (optional)
-   DATABASE_PATH=./data/bluesky_feed.db
+   # Database settings (required)
+   TURSO_DATABASE_URL=libsql://your-database-name.turso.io
+   TURSO_AUTH_TOKEN=your_turso_auth_token
    DEFAULT_DAYS_BACK=1
    MAX_POSTS_PER_FETCH=100
    ```
@@ -74,6 +75,10 @@ A Python application that reads your Bluesky social media feed and uses Claude A
 ```bash
 bluesky-summarizer run
 ```
+
+## Architecture Overview
+
+This project is Turso-only for persistence. For a deeper overview of components and data flow, see `docs/architecture.md`.
 
 **Fetch posts from the last 3 days and summarize**:
 ```bash
@@ -202,13 +207,14 @@ All configuration is managed through environment variables. See `.env.example` f
 - **BLUESKY_HANDLE**: Your Bluesky handle
 - **BLUESKY_PASSWORD**: Your Bluesky app password
 - **ANTHROPIC_API_KEY**: Your Anthropic API key
-- **DATABASE_PATH**: Path to SQLite database file
+- **TURSO_DATABASE_URL**: Your Turso/libSQL database URL (e.g., `libsql://<name>.turso.io`)
+- **TURSO_AUTH_TOKEN**: Auth token for your Turso database
 - **DEFAULT_DAYS_BACK**: Default number of days to look back
 - **MAX_POSTS_PER_FETCH**: Maximum posts per API request
 
 ## Database Schema
 
-The application uses SQLite with two main tables:
+The application uses Turso/libSQL with two main tables:
 
 ### Posts Table
 - `id`: Primary key

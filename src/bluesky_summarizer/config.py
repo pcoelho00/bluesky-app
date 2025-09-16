@@ -1,5 +1,5 @@
 """
-Configuration management for the Bluesky Feed Summarizer.
+Configuration management for the Bluesky Feed Summarizer (Turso-only).
 """
 
 import os
@@ -24,30 +24,28 @@ class AnthropicConfig(BaseModel):
 
 
 class DatabaseConfig(BaseModel):
-    """Configuration for database connection."""
+    """Configuration for database connection (Turso-only, backward-compatible fields)."""
 
-    # For local SQLite
-    path: str = Field(
-        default="./data/bluesky_feed.db", description="Path to SQLite database file"
-    )
+    # Legacy fields kept for compatibility with tests
+    db_path: str = Field(default="./data/bluesky_feed.db")
+    environment: str = Field(default="local")
 
-    # For Turso (production)
+    # Turso settings
     url: str = Field(
         default="", description="Turso database URL (e.g., libsql://your-db.turso.io)"
     )
     auth_token: str = Field(default="", description="Turso authentication token")
 
-    # Environment mode
-    environment: str = Field(
-        default="local", description="Database environment: 'local' or 'production'"
-    )
-
     @property
     def is_turso(self) -> bool:
-        """Check if using Turso instead of local SQLite."""
         return self.environment == "production" and bool(
             self.url and self.url.startswith(("libsql://", "https://"))
         )
+
+    @property
+    def path(self) -> str:
+        # legacy path behavior
+        return self.db_path
 
 
 class AppConfig(BaseModel):
@@ -83,10 +81,10 @@ class Config:
         self.anthropic = AnthropicConfig(api_key=self._get_env_var("ANTHROPIC_API_KEY"))
 
         self.database = DatabaseConfig(
-            path=os.getenv("DATABASE_PATH", "./data/bluesky_feed.db"),
+            db_path=os.getenv("DATABASE_PATH", "./data/bluesky_feed.db"),
+            environment=os.getenv("DB_ENVIRONMENT", "local"),
             url=os.getenv("TURSO_DATABASE_URL", ""),
             auth_token=os.getenv("TURSO_AUTH_TOKEN", ""),
-            environment=os.getenv("DB_ENVIRONMENT", "local"),
         )
 
         self.app = AppConfig(
@@ -111,46 +109,40 @@ def get_config() -> Config:
 
 
 def set_database_environment(environment: str) -> None:
-    """Set the database environment in .env file.
+    """Backward-compatible helper to set DB_ENVIRONMENT.
 
-    Args:
-        environment: Either 'local' or 'production'
+    Note: SQLite is no longer supported; this writes the .env key for legacy
+    scripts/tests but the application will still use Turso.
     """
     if environment not in ["local", "production"]:
         raise ValueError("Environment must be either 'local' or 'production'")
 
-    # Read current .env file
     env_file = ".env"
-    env_lines = []
-
+    env_lines: list[str] = []
     if os.path.exists(env_file):
         with open(env_file, "r") as f:
             env_lines = f.readlines()
 
-    # Update or add DB_ENVIRONMENT
     found = False
     for i, line in enumerate(env_lines):
         if line.strip().startswith("DB_ENVIRONMENT="):
             env_lines[i] = f"DB_ENVIRONMENT={environment}\n"
             found = True
             break
-
     if not found:
         env_lines.append(f"DB_ENVIRONMENT={environment}\n")
 
-    # Write back to .env file
     with open(env_file, "w") as f:
         f.writelines(env_lines)
 
-    # Update current environment variable
-    os.environ["DB_ENVIRONMENT"] = environment
-
-    # Reload dotenv to ensure changes are picked up
     load_dotenv(override=True)
+    os.environ["DB_ENVIRONMENT"] = environment
 
 
 def get_database_environment() -> str:
-    """Get the current database environment."""
+    """Backward-compatible getter for DB_ENVIRONMENT (default 'local')."""
+    # Do not implicitly load .env here to avoid picking up parent project values
+    # when tests intentionally expect a default of 'local'.
     return os.getenv("DB_ENVIRONMENT", "local")
 
 

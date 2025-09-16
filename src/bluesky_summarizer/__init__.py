@@ -8,17 +8,7 @@ __version__ = "1.0.0"
 __author__ = "Your Name"
 __email__ = "your.email@example.com"
 
-# Import main components for easier access
-from .database import DatabaseManager
-from .bluesky import BlueSkyClient
-from .ai import ClaudeSummarizer
-from .streaming import StreamingService
-from .config import config
+# Avoid importing heavy submodules at package import time to reduce side effects
+# and environment variable requirements during tests that only need CLI helpers.
 
-__all__ = [
-    "DatabaseManager",
-    "BlueSkyClient",
-    "ClaudeSummarizer",
-    "StreamingService",
-    "config",
-]
+__all__ = ["__version__", "__author__", "__email__"]

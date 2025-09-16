@@ -17,9 +17,9 @@ class TestTursoDatabaseManager:
         """Set up for each test method."""
         self.mock_client = MagicMock()
 
-        # Mock the libsql_client module
+        # Mock the libsql module
         self.libsql_patcher = patch(
-            "bluesky_summarizer.database.turso_operations.libsql_client"
+            "bluesky_summarizer.database.turso_operations.libsql"
         )
         self.mock_libsql = self.libsql_patcher.start()
         self.mock_libsql.create_client.return_value = self.mock_client

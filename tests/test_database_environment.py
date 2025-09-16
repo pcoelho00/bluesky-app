@@ -25,7 +25,7 @@ class TestDatabaseConfig:
     def test_is_turso_with_local_environment(self):
         """Test is_turso property returns False for local environment."""
         config = DatabaseConfig(
-            path="./test.db",
+            db_path="./test.db",
             url="libsql://test.turso.io",
             auth_token="token123",
             environment="local",
@@ -35,7 +35,7 @@ class TestDatabaseConfig:
     def test_is_turso_with_production_environment_and_valid_url(self):
         """Test is_turso property returns True for production with valid URL."""
         config = DatabaseConfig(
-            path="./test.db",
+            db_path="./test.db",
             url="libsql://test.turso.io",
             auth_token="token123",
             environment="production",
@@ -45,7 +45,7 @@ class TestDatabaseConfig:
     def test_is_turso_with_production_environment_and_https_url(self):
         """Test is_turso property returns True for production with HTTPS URL."""
         config = DatabaseConfig(
-            path="./test.db",
+            db_path="./test.db",
             url="https://test.turso.io",
             auth_token="token123",
             environment="production",
@@ -55,14 +55,14 @@ class TestDatabaseConfig:
     def test_is_turso_with_production_environment_but_no_url(self):
         """Test is_turso property returns False for production without URL."""
         config = DatabaseConfig(
-            path="./test.db", url="", auth_token="token123", environment="production"
+            db_path="./test.db", url="", auth_token="token123", environment="production"
         )
         assert not config.is_turso
 
     def test_is_turso_with_production_environment_but_invalid_url(self):
         """Test is_turso property returns False for production with invalid URL."""
         config = DatabaseConfig(
-            path="./test.db",
+            db_path="./test.db",
             url="invalid://test.db",
             auth_token="token123",
             environment="production",
@@ -169,7 +169,7 @@ class TestDatabaseFactory:
     def test_create_database_manager_local_environment(self):
         """Test create_database_manager returns DatabaseManager for local environment."""
         config = DatabaseConfig(
-            path="./test.db",
+            db_path="./test.db",
             url="libsql://test.turso.io",
             auth_token="token123",
             environment="local",
@@ -182,7 +182,7 @@ class TestDatabaseFactory:
     def test_create_database_manager_production_environment(self, mock_turso_manager):
         """Test create_database_manager returns TursoDatabaseManager for production environment."""
         config = DatabaseConfig(
-            path="./test.db",
+            db_path="./test.db",
             url="libsql://test.turso.io",
             auth_token="token123",
             environment="production",
@@ -194,7 +194,7 @@ class TestDatabaseFactory:
     def test_create_database_manager_production_without_url_raises_error(self):
         """Test create_database_manager raises error for production without URL."""
         config = DatabaseConfig(
-            path="./test.db", url="", auth_token="token123", environment="production"
+            db_path="./test.db", url="", auth_token="token123", environment="production"
         )
 
         with pytest.raises(
@@ -206,7 +206,7 @@ class TestDatabaseFactory:
     def test_create_database_manager_production_without_token_raises_error(self):
         """Test create_database_manager raises error for production without token."""
         config = DatabaseConfig(
-            path="./test.db",
+            db_path="./test.db",
             url="libsql://test.turso.io",
             auth_token="",
             environment="production",
@@ -235,20 +235,20 @@ class TestDatabaseManagerIntegration:
 
     def test_sqlite_database_manager_creation(self):
         """Test that SQLite database manager can be created and initialized."""
-        config = DatabaseConfig(path="./test.db", environment="local")
+        config = DatabaseConfig(db_path="./test.db", environment="local")
 
         manager = create_database_manager(config)
         assert isinstance(manager, DatabaseManager)
         assert os.path.exists("./test.db")
 
-    @patch("bluesky_summarizer.database.turso_operations.libsql_client")
+    @patch("bluesky_summarizer.database.turso_operations.libsql")
     def test_turso_database_manager_creation(self, mock_libsql):
         """Test that Turso database manager can be created."""
         mock_client = MagicMock()
         mock_libsql.create_client.return_value = mock_client
 
         config = DatabaseConfig(
-            path="./test.db",
+            db_path="./test.db",
             url="libsql://test.turso.io",
             auth_token="token123",
             environment="production",

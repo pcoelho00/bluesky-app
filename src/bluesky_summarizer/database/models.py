@@ -23,7 +23,9 @@ class Post(BaseModel):
     like_count: int = Field(default=0, ge=0, description="Number of likes")
     repost_count: int = Field(default=0, ge=0, description="Number of reposts")
     reply_count: int = Field(default=0, ge=0, description="Number of replies")
-    indexed_at: datetime = Field(..., description="When the post was indexed")
+    indexed_at: datetime = Field(
+        default_factory=datetime.utcnow, description="When the post was indexed"
+    )
 
     @field_validator("created_at", "indexed_at", mode="before")
     @classmethod

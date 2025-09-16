@@ -13,7 +13,7 @@ from click.testing import CliRunner
 import sys
 
 sys.path.append(".")
-from db_env_cli import db, db_switch, db_status, show_db_status
+from bluesky_summarizer.db_env_cli import db, db_switch, db_status, show_db_status
 
 
 class TestDatabaseEnvironmentCLI:

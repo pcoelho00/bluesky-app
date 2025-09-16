@@ -7,7 +7,6 @@ from datetime import datetime, timezone
 from typing import List, Optional
 from atproto import Client, models
 from ..database.models import Post
-from ..config import config
 from ..utils.retry import retry
 
 
@@ -24,10 +23,7 @@ class BlueSkyClient:
         self.client = Client()
         self._authenticated = False
 
-    @retry(
-        attempts=config.app.api_retry_attempts,
-        base_delay=config.app.api_retry_base_delay,
-    )
+    @retry(attempts=3, base_delay=0.5)
     def authenticate(self) -> bool:
         """Authenticate with Bluesky API."""
         try:
@@ -40,10 +36,7 @@ class BlueSkyClient:
             self._authenticated = False
             return False
 
-    @retry(
-        attempts=config.app.api_retry_attempts,
-        base_delay=config.app.api_retry_base_delay,
-    )
+    @retry(attempts=3, base_delay=0.5)
     def fetch_timeline_posts(
         self, start_date: datetime, end_date: datetime, limit: int = 100
     ) -> List[Post]:
