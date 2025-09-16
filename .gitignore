@@ -171,6 +171,10 @@ data/
 *.db
 *.sqlite
 *.sqlite3
+*.db-info
+*.db-journal
+*.db-shm
+*.db-wal
 
 # Log files
 *.log
