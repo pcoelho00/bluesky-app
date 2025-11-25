@@ -10,3 +10,4 @@ This is a Python application that reads Bluesky social media feeds and uses Clau
 - Implement proper error handling and logging
 - Write docstrings for all classes and functions
 - Use dependency injection patterns for better testability
+- Use sqlite3 for local data storage

@@ -14,7 +14,7 @@ import time
 
 from atproto import Client
 
-from ..database import DatabaseManager, create_database_manager
+from ..database import DatabaseManager
 from ..database.models import Post
 from ..config import config
 
@@ -45,7 +45,7 @@ class StreamingService:
             self.db_manager = db_manager
         else:
             # try:
-            self.db_manager = create_database_manager(config.database)
+            self.db_manager = DatabaseManager(config.database.db_path)
             # except Exception:
             #     # Fallback to local manager to keep service usable even if factory fails in unusual envs
             #     self.db_manager = DatabaseManager(config.database.path)

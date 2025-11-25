@@ -1,5 +1,5 @@
 """
-Configuration management for the Bluesky Feed Summarizer (Turso-only).
+Configuration management for the Bluesky Feed Summarizer.
 """
 
 import os
@@ -24,27 +24,12 @@ class AnthropicConfig(BaseModel):
 
 
 class DatabaseConfig(BaseModel):
-    """Configuration for database connection (Turso-only, backward-compatible fields)."""
+    """Configuration for database connection (SQLite)."""
 
-    # Legacy fields kept for compatibility with tests
     db_path: str = Field(default="./data/bluesky_feed.db")
-    environment: str = Field(default="local")
-
-    # Turso settings
-    url: str = Field(
-        default="", description="Turso database URL (e.g., libsql://your-db.turso.io)"
-    )
-    auth_token: str = Field(default="", description="Turso authentication token")
-
-    @property
-    def is_turso(self) -> bool:
-        return self.environment == "production" and bool(
-            self.url and self.url.startswith(("libsql://", "https://"))
-        )
 
     @property
     def path(self) -> str:
-        # legacy path behavior
         return self.db_path
 
 
@@ -82,9 +67,6 @@ class Config:
 
         self.database = DatabaseConfig(
             db_path=os.getenv("DATABASE_PATH", "./data/bluesky_feed.db"),
-            environment=os.getenv("DB_ENVIRONMENT", "local"),
-            url=os.getenv("TURSO_DATABASE_URL", ""),
-            auth_token=os.getenv("TURSO_AUTH_TOKEN", ""),
         )
 
         self.app = AppConfig(

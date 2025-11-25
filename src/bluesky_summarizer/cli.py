@@ -2,9 +2,9 @@
 Command Line Interface for the Bluesky Feed Summarizer.
 """
 
+import datetime as dt
 import logging
 import sys
-from datetime import datetime, timedelta
 from typing import Optional
 
 import click
@@ -13,23 +13,24 @@ from rich.table import Table
 from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, TextColumn
 
-from .config import get_database_environment, set_database_environment
+from .config import get_config, Config
 from .utils.dates import resolve_date_range
-from .database import create_database_manager
+
+from .database.operations import DatabaseManager
 from .bluesky import BlueSkyClient
 from .ai import ClaudeSummarizer
 
 
-def get_app_config():
+def get_app_config() -> Config:
     """Get application configuration - only loads when needed."""
-    from .config import get_config
 
     return get_config()
 
 
 # Setup logging
 logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
 
@@ -38,20 +39,21 @@ console = Console()
 
 
 def _fetch_posts_logic(
-    start_date: datetime, end_date: datetime, limit: Optional[int] = None
+    start_date: dt.datetime, end_date: dt.datetime, limit: Optional[int] = None
 ) -> int:
     """Core logic for fetching posts. Returns number of saved posts."""
-    get_app_config()
-    fetch_limit = limit or get_app_config().app.max_posts_per_fetch
+
+    app_config = get_app_config()
+    fetch_limit = limit or app_config.app.max_posts_per_fetch
 
     console.print(
         f"[blue]Fetching posts from {start_date.date()} to {end_date.date()}[/blue]"
     )
 
     # Initialize components
-    db_manager = create_database_manager(get_app_config().database)
+    db_manager = DatabaseManager(app_config.database.db_path)
     bluesky_client = BlueSkyClient(
-        get_app_config().bluesky.handle, get_app_config().bluesky.password
+        app_config.bluesky.handle, app_config.bluesky.password
     )
 
     with Progress(
@@ -89,14 +91,14 @@ def _fetch_posts_logic(
     table.add_row("New Posts Saved", str(save_result["new"]))
     table.add_row("Existing Posts Updated", str(save_result["updated"]))
     table.add_row("Total Posts Processed", str(save_result["total"]))
-    table.add_row("Database Path", get_app_config().database.path)
+    table.add_row("Database Path", app_config.database.path)
 
     console.print(table)
     return save_result["new"]
 
 
 def _summarize_posts_logic(
-    start_date: datetime, end_date: datetime, model: str, save: bool = True
+    start_date: dt.datetime, end_date: dt.datetime, model: str, save: bool = True
 ) -> str:
     """Core logic for summarizing posts. Returns summary text."""
     console.print(
@@ -104,8 +106,9 @@ def _summarize_posts_logic(
     )
 
     # Initialize components
-    db_manager = create_database_manager(get_app_config().database)
-    summarizer = ClaudeSummarizer(get_app_config().anthropic.api_key, model)
+    app_config = get_app_config()
+    db_manager = DatabaseManager(app_config.database.db_path)
+    summarizer = ClaudeSummarizer(app_config.anthropic.api_key, model)
 
     with Progress(
         SpinnerColumn(),
@@ -172,8 +175,11 @@ def prune(older_than_days: int, vacuum: bool):
         if older_than_days <= 0:
             raise click.BadParameter("older-than-days must be positive")
 
-        cutoff = datetime.utcnow() - timedelta(days=older_than_days)
-        db_manager = create_database_manager(get_app_config().database)
+        app_config = get_app_config()
+        cutoff = dt.datetime.now(dt.timezone.utc).replace(tzinfo=None)
+        cutoff -= dt.timedelta(days=older_than_days)
+
+        db_manager = DatabaseManager(app_config.database.db_path)
         deleted = db_manager.prune_posts_older_than(cutoff)
         after_count = db_manager.get_total_post_count()
 
@@ -222,18 +228,19 @@ def prune(older_than_days: int, vacuum: bool):
 )
 def fetch(
     days: Optional[int],
-    start_date: Optional[datetime],
-    end_date: Optional[datetime],
+    start_date: Optional[dt.datetime],
+    end_date: Optional[dt.datetime],
     limit: Optional[int],
 ):
     """Fetch posts from Bluesky timeline and save to database."""
 
     try:
+        app_config = get_app_config()
         fetch_start, fetch_end = resolve_date_range(
             start=start_date,
             end=end_date,
             days=days,
-            default_days_back=get_app_config().app.default_days_back,
+            default_days_back=app_config.app.default_days_back,
         )
         _fetch_posts_logic(fetch_start, fetch_end, limit)
 
@@ -268,19 +275,20 @@ def fetch(
 )
 def summarize(
     days: Optional[int],
-    start_date: Optional[datetime],
-    end_date: Optional[datetime],
+    start_date: Optional[dt.datetime],
+    end_date: Optional[dt.datetime],
     model: str,
     save: bool,
 ):
     """Generate AI summary of posts in the database."""
 
     try:
+        app_config = get_app_config()
         summary_start, summary_end = resolve_date_range(
             start=start_date,
             end=end_date,
             days=days,
-            default_days_back=get_app_config().app.default_days_back,
+            default_days_back=app_config.app.default_days_back,
         )
         _summarize_posts_logic(summary_start, summary_end, model, save)
 
@@ -319,8 +327,8 @@ def summarize(
 )
 def run(
     days: Optional[int],
-    start_date: Optional[datetime],
-    end_date: Optional[datetime],
+    start_date: Optional[dt.datetime],
+    end_date: Optional[dt.datetime],
     limit: Optional[int],
     model: str,
 ):
@@ -331,11 +339,12 @@ def run(
     )
 
     try:
+        app_config = get_app_config()
         process_start, process_end = resolve_date_range(
             start=start_date,
             end=end_date,
             days=days,
-            default_days_back=get_app_config().app.default_days_back,
+            default_days_back=app_config.app.default_days_back,
         )
 
         # Run fetch
@@ -360,10 +369,8 @@ def history(limit: int):
     """Show recent summaries from the database."""
 
     try:
-        db_manager = create_database_manager(get_app_config().database)
-
-        # This would need to be implemented in DatabaseManager
-        # For now, just show the latest summary
+        app_config = get_app_config()
+        db_manager = DatabaseManager(app_config.database.db_path)
         latest_summary = db_manager.get_latest_summary()
 
         if not latest_summary:
@@ -409,19 +416,20 @@ def history(limit: int):
 )
 def posts(
     days: Optional[int],
-    start_date: Optional[datetime],
-    end_date: Optional[datetime],
+    start_date: Optional[dt.datetime],
+    end_date: Optional[dt.datetime],
     limit: int,
     author: Optional[str],
 ):
     """Display saved posts from the database in chronological order."""
 
     try:
+        app_config = get_app_config()
         query_start, query_end = resolve_date_range(
             start=start_date,
             end=end_date,
             days=days,
-            default_days_back=get_app_config().app.default_days_back,
+            default_days_back=app_config.app.default_days_back,
         )
 
         console.print(
@@ -429,7 +437,7 @@ def posts(
         )
 
         # Initialize database manager
-        db_manager = create_database_manager(get_app_config().database)
+        db_manager = DatabaseManager(app_config.database.db_path)
 
         with Progress(
             SpinnerColumn(),
@@ -521,21 +529,21 @@ def status():
     table = Table(title="Bluesky Feed Summarizer Status")
     table.add_column("Setting", style="cyan")
     table.add_column("Value", style="green")
-
+    app_config = get_app_config()
     # Try to load config, but handle missing environment variables gracefully
     try:
-        bluesky_handle = get_app_config().bluesky.handle
+        bluesky_handle = app_config.bluesky.handle
     except ValueError:
         bluesky_handle = "❌ Not configured (set BLUESKY_HANDLE)"
 
     try:
-        db_path = get_app_config().database.path
+        db_path = app_config.database.db_path
     except ValueError:
         db_path = "./data/bluesky_feed.db"  # default value
 
     try:
-        default_days = str(get_app_config().app.default_days_back)
-        max_posts = str(get_app_config().app.max_posts_per_fetch)
+        default_days = str(app_config.app.default_days_back)
+        max_posts = str(app_config.app.max_posts_per_fetch)
     except ValueError:
         default_days = "1"  # default value
         max_posts = "100"  # default value
@@ -553,10 +561,6 @@ def status():
 
     if db_exists:
         try:
-            # For status command, create a simple DatabaseManager directly
-            # since we might not have full config available
-            from .database import DatabaseManager
-
             db_manager = DatabaseManager(db_path)
             latest_summary = db_manager.get_latest_summary()
             if latest_summary:
@@ -610,6 +614,7 @@ def stream(poll_interval: int, users: tuple, keywords: tuple, stats_interval: in
     try:
         from .streaming import StreamingService
 
+        app_config = get_app_config()
         # Convert tuples to sets
         user_handles = set(users) if users else None
         keyword_set = set(keywords) if keywords else None
@@ -623,7 +628,7 @@ def stream(poll_interval: int, users: tuple, keywords: tuple, stats_interval: in
 
         config_table.add_row("Poll Interval", f"{poll_interval} seconds")
         config_table.add_row("Stats Interval", f"{stats_interval} seconds")
-        config_table.add_row("Database Path", get_app_config().database.path)
+        config_table.add_row("Database Path", app_config.database.path)
 
         if user_handles:
             config_table.add_row("Following Users", ", ".join(user_handles))
@@ -758,7 +763,8 @@ def verify():
     """Verify database integrity and check for duplicate posts."""
 
     try:
-        db_manager = create_database_manager(get_app_config().database)
+        app_config = get_app_config()
+        db_manager = DatabaseManager(app_config.database.db_path)
 
         console.print("[blue]🔍 Verifying database integrity...[/blue]")
 
@@ -832,104 +838,6 @@ def main():
         console.print(f"[red]Unexpected error: {e}[/red]")
         logger.exception("Unexpected error in main")
         sys.exit(1)
-
-
-@cli.group()
-def db():
-    """Database environment management commands."""
-    pass
-
-
-@db.command(name="switch")
-@click.argument("environment", type=click.Choice(["local", "production"]))
-def db_switch(environment):
-    """Switch between local and production database environments.
-
-    Args:
-        environment: Either 'local' (SQLite) or 'production' (Turso)
-    """
-    try:
-        current_env = get_database_environment()
-
-        if current_env == environment:
-            console.print(
-                f"[yellow]Already using {environment} database environment[/yellow]"
-            )
-            return
-
-        # Validate production environment has required settings
-        if environment == "production":
-            import os
-
-            turso_url = os.getenv("TURSO_DATABASE_URL")
-            turso_token = os.getenv("TURSO_AUTH_TOKEN")
-
-            if not turso_url or not turso_token:
-                console.print(
-                    "[red]Error: Production environment requires TURSO_DATABASE_URL "
-                    "and TURSO_AUTH_TOKEN to be set in your .env file[/red]"
-                )
-                console.print(
-                    "[yellow]Please add these variables to your .env file:[/yellow]"
-                )
-                console.print("TURSO_DATABASE_URL=libsql://your-database-name.turso.io")
-                console.print("TURSO_AUTH_TOKEN=your-turso-auth-token")
-                sys.exit(1)
-
-        # Update environment
-        set_database_environment(environment)
-
-        # Show confirmation
-        db_type = "Turso (Cloud)" if environment == "production" else "SQLite (Local)"
-        console.print(
-            f"[green]✓ Switched to {environment} database environment ({db_type})[/green]"
-        )
-
-        # Show current status
-        _show_db_status()
-
-    except Exception as e:
-        console.print(f"[red]Error switching database environment: {e}[/red]")
-        sys.exit(1)
-
-
-@db.command(name="status")
-def db_status():
-    """Show current database environment status."""
-    _show_db_status()
-
-
-def _show_db_status():
-    """Helper function to show database status."""
-    current_env = get_database_environment()
-
-    table = Table(title="Database Environment Status")
-    table.add_column("Setting", style="cyan")
-    table.add_column("Value", style="green")
-
-    # Current environment
-    env_display = f"{current_env} ({'Turso Cloud' if current_env == 'production' else 'Local SQLite'})"
-    table.add_row("Current Environment", env_display)
-
-    # Database details
-    if current_env == "production":
-        import os
-
-        turso_url = os.getenv("TURSO_DATABASE_URL", "❌ Not configured")
-        turso_token = (
-            "✓ Configured" if os.getenv("TURSO_AUTH_TOKEN") else "❌ Not configured"
-        )
-        table.add_row("Turso URL", turso_url)
-        table.add_row("Turso Token", turso_token)
-    else:
-        import os
-
-        db_path = os.getenv("DATABASE_PATH", "./data/bluesky_feed.db")
-        db_exists = "✓ Yes" if os.path.exists(db_path) else "✗ No"
-        table.add_row("Database Path", db_path)
-        table.add_row("Database Exists", db_exists)
-
-    console.print(table)
 
 
 if __name__ == "__main__":
