@@ -1,4 +1,9 @@
-"""Service layer interface (protocol) definitions for improved testability."""
+"""Service layer interface (protocol) definitions for improved testability.
+
+These :class:`~typing.Protocol` definitions are retained for structural
+(duck-type) compatibility.  The canonical abstract interface for database
+backends is :class:`~.database.base.AbstractDatabaseManager`.
+"""
 
 from __future__ import annotations
 

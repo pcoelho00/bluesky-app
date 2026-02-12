@@ -16,9 +16,14 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 from .config import get_config, Config
 from .utils.dates import resolve_date_range
 
-from .database.operations import DatabaseManager
+from .database import create_database_manager, AbstractDatabaseManager
 from .bluesky import BlueSkyClient
 from .ai import ClaudeSummarizer
+
+
+def _get_db_manager(app_config: Config) -> AbstractDatabaseManager:
+    """Create a database manager from the application config."""
+    return create_database_manager(app_config.database.connection_url)
 
 
 def get_app_config() -> Config:
@@ -51,7 +56,7 @@ def _fetch_posts_logic(
     )
 
     # Initialize components
-    db_manager = DatabaseManager(app_config.database.db_path)
+    db_manager = _get_db_manager(app_config)
     bluesky_client = BlueSkyClient(
         app_config.bluesky.handle, app_config.bluesky.password
     )
@@ -97,8 +102,35 @@ def _fetch_posts_logic(
     return save_result["new"]
 
 
+def _get_summarizer(provider: str, api_key: str, model: str):
+    provider_key = provider.lower()
+    if provider_key == "claude":
+        return ClaudeSummarizer(api_key, model)
+    if provider_key == "openai":
+        try:
+            from .ai.openai_summarizer import OpenAISummarizer
+        except ImportError as exc:
+            raise ImportError(
+                "OpenAI support not installed. Install with: pip install -e .[openai]"
+            ) from exc
+        return OpenAISummarizer(api_key, model)
+    if provider_key == "gemini":
+        try:
+            from .ai.gemini_summarizer import GeminiSummarizer
+        except ImportError as exc:
+            raise ImportError(
+                "Gemini support not installed. Install with: pip install -e .[gemini]"
+            ) from exc
+        return GeminiSummarizer(api_key, model)
+    raise ValueError("Unsupported provider. Choose from: claude, openai, gemini")
+
+
 def _summarize_posts_logic(
-    start_date: dt.datetime, end_date: dt.datetime, model: str, save: bool = True
+    start_date: dt.datetime,
+    end_date: dt.datetime,
+    provider: str,
+    model: str,
+    save: bool = True,
 ) -> str:
     """Core logic for summarizing posts. Returns summary text."""
     console.print(
@@ -107,8 +139,20 @@ def _summarize_posts_logic(
 
     # Initialize components
     app_config = get_app_config()
-    db_manager = DatabaseManager(app_config.database.db_path)
-    summarizer = ClaudeSummarizer(app_config.anthropic.api_key, model)
+    db_manager = _get_db_manager(app_config)
+    if provider.lower() == "openai":
+        api_key = app_config.openai.api_key
+    elif provider.lower() == "gemini":
+        api_key = app_config.gemini.api_key
+    else:
+        api_key = app_config.anthropic.api_key
+
+    if not api_key:
+        raise ValueError(
+            f"Missing API key for provider '{provider}'. Set the corresponding env var."
+        )
+
+    summarizer = _get_summarizer(provider, api_key, model)
 
     with Progress(
         SpinnerColumn(),
@@ -179,7 +223,7 @@ def prune(older_than_days: int, vacuum: bool):
         cutoff = dt.datetime.now(dt.timezone.utc).replace(tzinfo=None)
         cutoff -= dt.timedelta(days=older_than_days)
 
-        db_manager = DatabaseManager(app_config.database.db_path)
+        db_manager = _get_db_manager(app_config)
         deleted = db_manager.prune_posts_older_than(cutoff)
         after_count = db_manager.get_total_post_count()
 
@@ -265,10 +309,17 @@ def fetch(
     "--end-date", type=click.DateTime(["%Y-%m-%d"]), help="End date (YYYY-MM-DD)"
 )
 @click.option(
+    "--provider",
+    "-p",
+    default="gemini",
+    type=click.Choice(["claude", "openai", "gemini"], case_sensitive=False),
+    help="AI provider to use for summarization",
+)
+@click.option(
     "--model",
     "-m",
-    default="claude-3-7-sonnet-latest",
-    help="Claude model to use for summarization",
+    default="gemini-3-flash-preview",
+    help="Model to use for summarization (provider-specific)",
 )
 @click.option(
     "--save/--no-save", default=True, help="Save summary to database (default: True)"
@@ -277,6 +328,7 @@ def summarize(
     days: Optional[int],
     start_date: Optional[dt.datetime],
     end_date: Optional[dt.datetime],
+    provider: str,
     model: str,
     save: bool,
 ):
@@ -290,7 +342,7 @@ def summarize(
             days=days,
             default_days_back=app_config.app.default_days_back,
         )
-        _summarize_posts_logic(summary_start, summary_end, model, save)
+        _summarize_posts_logic(summary_start, summary_end, provider, model, save)
 
     except Exception as e:
         console.print(f"[red]Error: {e}[/red]")
@@ -320,16 +372,24 @@ def summarize(
     help="Maximum number of posts to fetch per request",
 )
 @click.option(
+    "--provider",
+    "-p",
+    default="gemini",
+    type=click.Choice(["claude", "openai", "gemini"], case_sensitive=False),
+    help="AI provider to use for summarization",
+)
+@click.option(
     "--model",
     "-m",
-    default="claude-3-7-sonnet-latest",
-    help="Claude model to use for summarization",
+    default="gemini-3-flash-preview",
+    help="Model to use for summarization (provider-specific)",
 )
 def run(
     days: Optional[int],
     start_date: Optional[dt.datetime],
     end_date: Optional[dt.datetime],
     limit: Optional[int],
+    provider: str,
     model: str,
 ):
     """Fetch posts and generate summary in one command."""
@@ -353,7 +413,7 @@ def run(
 
         # Run summarize
         console.print("\n[bold]Step 2: Generating summary[/bold]")
-        _summarize_posts_logic(process_start, process_end, model, save=True)
+        _summarize_posts_logic(process_start, process_end, provider, model, save=True)
 
     except Exception as e:
         console.print(f"[red]Error: {e}[/red]")
@@ -370,7 +430,7 @@ def history(limit: int):
 
     try:
         app_config = get_app_config()
-        db_manager = DatabaseManager(app_config.database.db_path)
+        db_manager = _get_db_manager(app_config)
         latest_summary = db_manager.get_latest_summary()
 
         if not latest_summary:
@@ -437,7 +497,7 @@ def posts(
         )
 
         # Initialize database manager
-        db_manager = DatabaseManager(app_config.database.db_path)
+        db_manager = _get_db_manager(app_config)
 
         with Progress(
             SpinnerColumn(),
@@ -561,7 +621,7 @@ def status():
 
     if db_exists:
         try:
-            db_manager = DatabaseManager(db_path)
+            db_manager = _get_db_manager(app_config)
             latest_summary = db_manager.get_latest_summary()
             if latest_summary:
                 table.add_row(
@@ -764,7 +824,7 @@ def verify():
 
     try:
         app_config = get_app_config()
-        db_manager = DatabaseManager(app_config.database.db_path)
+        db_manager = _get_db_manager(app_config)
 
         console.print("[blue]🔍 Verifying database integrity...[/blue]")
 

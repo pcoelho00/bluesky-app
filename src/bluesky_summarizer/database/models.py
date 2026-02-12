@@ -2,7 +2,7 @@
 Data models for the Bluesky Feed Summarizer database.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 from pydantic import BaseModel, Field, field_validator
 from pydantic import ConfigDict
@@ -24,7 +24,8 @@ class Post(BaseModel):
     repost_count: int = Field(default=0, ge=0, description="Number of reposts")
     reply_count: int = Field(default=0, ge=0, description="Number of replies")
     indexed_at: datetime = Field(
-        default_factory=datetime.utcnow, description="When the post was indexed"
+        default_factory=lambda: datetime.now(timezone.utc),
+        description="When the post was indexed",
     )
 
     @field_validator("created_at", "indexed_at", mode="before")

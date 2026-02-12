@@ -14,7 +14,7 @@ import time
 
 from atproto import Client
 
-from ..database import DatabaseManager
+from ..database import AbstractDatabaseManager, create_database_manager
 from ..database.models import Post
 from ..config import config
 
@@ -31,7 +31,7 @@ class StreamingService:
 
     def __init__(
         self,
-        db_manager: Optional[DatabaseManager] = None,
+        db_manager: Optional[AbstractDatabaseManager] = None,
         user_handles: Optional[Set[str]] = None,
         keywords: Optional[Set[str]] = None,
         poll_interval: int = 30,
@@ -40,15 +40,11 @@ class StreamingService:
     ):
         """Initialize the streaming service and its internal state."""
         # Core config
-        # Prefer provided db_manager; otherwise create via factory. In tests, DatabaseManager may be patched.
+        # Prefer provided db_manager; otherwise create via factory.
         if db_manager is not None:
             self.db_manager = db_manager
         else:
-            # try:
-            self.db_manager = DatabaseManager(config.database.db_path)
-            # except Exception:
-            #     # Fallback to local manager to keep service usable even if factory fails in unusual envs
-            #     self.db_manager = DatabaseManager(config.database.path)
+            self.db_manager = create_database_manager(config.database.connection_url)
         self.user_handles = user_handles or set()
         self.keywords = keywords or set()
         self.poll_interval = poll_interval

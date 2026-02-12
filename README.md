@@ -2,13 +2,13 @@ Completely written with AI, use at your own risk.
 
 # Bluesky Feed Summarizer
 
-A Python application that reads your Bluesky social media feed and uses Claude AI to generate intelligent daily summaries. The application stores data in a Turso/libSQL database and cleanly separates data ingestion/storage from AI summarization, with flexible date range options.
+A Python application that reads your Bluesky social media feed and uses AI models (Claude, OpenAI, or Gemini) to generate intelligent daily summaries. The application stores data in a SQL database and cleanly separates data ingestion/storage from AI summarization, with flexible date range options.
 
 ## Features
 
 - 🔄 **Fetch Bluesky Posts**: Automatically retrieve posts from your Bluesky timeline
-- 💾 **Turso/libSQL Storage**: Store posts and summaries in a managed Turso database (libSQL-compatible)
-- 🤖 **AI Summarization**: Generate intelligent summaries using Claude AI
+- 💾 **SQL Storage**: Store posts and summaries in a managed SQL database (SQLite or Postgres)
+- 🤖 **AI Summarization**: Generate intelligent summaries using Claude, OpenAI, or Gemini
 - 📅 **Flexible Date Ranges**: Specify custom date ranges for fetching and summarizing
 - 🖥️ **CLI Interface**: Easy-to-use command-line interface with rich output
 - ⚙️ **Configurable**: Customizable settings via environment variables
@@ -20,7 +20,7 @@ A Python application that reads your Bluesky social media feed and uses Claude A
 
 - Python 3.12 or higher
 - Bluesky account with app password
-- Anthropic API key for Claude
+- Anthropic, OpenAI, or Gemini API key
 
 ### Setup
 
@@ -34,6 +34,13 @@ A Python application that reads your Bluesky social media feed and uses Claude A
    pip install -e .
    ```
 
+   Optional provider extras:
+   ```bash
+   pip install -e .[openai]
+   pip install -e .[gemini]
+   pip install -e .[ai]
+   ```
+
 3. **Copy the environment template and configure**:
    ```bash
    cp .env.example .env
@@ -45,12 +52,14 @@ A Python application that reads your Bluesky social media feed and uses Claude A
    BLUESKY_HANDLE=your.handle.bsky.social
    BLUESKY_PASSWORD=your_app_password
 
-   # Claude AI credentials
+   # AI provider credentials
    ANTHROPIC_API_KEY=your_anthropic_api_key
+   OPENAI_API_KEY=your_openai_api_key
+   GEMINI_API_KEY=your_gemini_api_key
 
-   # Database settings (required)
-   TURSO_DATABASE_URL=libsql://your-database-name.turso.io
-   TURSO_AUTH_TOKEN=your_turso_auth_token
+   # Database settings (optional)
+   DATABASE_URL=sqlite:///./data/bluesky_feed.db
+   DATABASE_PATH=./data/bluesky_feed.db
    DEFAULT_DAYS_BACK=1
    MAX_POSTS_PER_FETCH=100
    ```
@@ -67,6 +76,14 @@ A Python application that reads your Bluesky social media feed and uses Claude A
 2. Navigate to your API dashboard
 3. Generate a new API key
 
+#### OpenAI API Key
+1. Sign up at [OpenAI](https://platform.openai.com/)
+2. Create an API key in your dashboard
+
+#### Gemini API Key
+1. Sign up at [Google AI Studio](https://aistudio.google.com/)
+2. Create an API key in your dashboard
+
 ## Usage
 
 ### Quick Start
@@ -78,7 +95,7 @@ bluesky-summarizer run
 
 ## Architecture Overview
 
-This project is Turso-only for persistence. For a deeper overview of components and data flow, see `docs/architecture.md`.
+This project supports SQLite and Postgres for persistence. For a deeper overview of components and data flow, see `docs/architecture.md`.
 
 **Fetch posts from the last 3 days and summarize**:
 ```bash
@@ -135,8 +152,8 @@ bluesky-summarizer summarize
 # Summarize posts from the last 3 days
 bluesky-summarizer summarize --days 3
 
-# Use a specific Claude model
-bluesky-summarizer summarize --model claude-3-haiku-20240307
+# Use a specific provider and model
+bluesky-summarizer summarize --provider openai --model gpt-4o-mini
 
 # Generate summary without saving to database
 bluesky-summarizer summarize --no-save
@@ -194,10 +211,18 @@ bluesky-summarizer run --start-date 2024-01-01 --end-date 2024-01-07
 bluesky-summarizer run --days 30
 ```
 
-#### Different Claude Models
-The application supports various Claude models, just pass the `--model` option:
+#### Different Providers and Models
+The application supports multiple providers and models. Use `--provider` and `--model`:
 ```bash
-bluesky-summarizer summarize --model claude-3-7-sonnet-latest
+bluesky-summarizer summarize --provider claude --model claude-3-7-sonnet-latest
+bluesky-summarizer summarize --provider openai --model gpt-4o-mini
+bluesky-summarizer summarize --provider gemini --model gemini-1.5-pro
+```
+
+Install provider-specific extras as needed:
+```bash
+pip install -e .[openai]
+pip install -e .[gemini]
 ```
 
 ## Configuration
@@ -207,14 +232,16 @@ All configuration is managed through environment variables. See `.env.example` f
 - **BLUESKY_HANDLE**: Your Bluesky handle
 - **BLUESKY_PASSWORD**: Your Bluesky app password
 - **ANTHROPIC_API_KEY**: Your Anthropic API key
-- **TURSO_DATABASE_URL**: Your Turso/libSQL database URL (e.g., `libsql://<name>.turso.io`)
-- **TURSO_AUTH_TOKEN**: Auth token for your Turso database
+- **OPENAI_API_KEY**: Your OpenAI API key
+- **GEMINI_API_KEY**: Your Gemini API key
+- **DATABASE_URL**: SQLAlchemy database URL (e.g., `sqlite:///./data/bluesky_feed.db`)
+- **DATABASE_PATH**: Legacy SQLite path (used if `DATABASE_URL` is not set)
 - **DEFAULT_DAYS_BACK**: Default number of days to look back
 - **MAX_POSTS_PER_FETCH**: Maximum posts per API request
 
 ## Database Schema
 
-The application uses Turso/libSQL with two main tables:
+The application uses SQLite/Postgres with two main tables:
 
 ### Posts Table
 - `id`: Primary key
@@ -232,5 +259,5 @@ The application uses Turso/libSQL with two main tables:
 - `start_date`, `end_date`: Date range of summarized posts
 - `post_count`: Number of posts summarized
 - `summary_text`: Generated summary
-- `model_used`: Claude model used for generation
+- `model_used`: AI model used for generation
 - `created_at`: When the summary was created

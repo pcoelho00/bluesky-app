@@ -17,13 +17,24 @@ dependencies = [
     "click>=8.2.1",
     "python-dotenv>=1.1.1",
     "pydantic>=2.11.7",
-    "rich>=14.0.0"
+    "rich>=14.0.0",
+    "sqlalchemy>=2.0.0",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=7.0.0",
     "pytest-mock>=3.0.0"
+]
+openai = [
+    "openai>=1.50.0"
+]
+gemini = [
+    "google-genai>=1.63.0"
+]
+ai = [
+    "openai>=1.50.0",
+    "google-genai>=1.63.0"
 ]
 
 [tool.setuptools.packages.find]

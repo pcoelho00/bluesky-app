@@ -10,7 +10,7 @@ from typing import List
 
 from bluesky_summarizer.streaming.service import StreamingService
 from bluesky_summarizer.database.models import Post
-from bluesky_summarizer.database.operations import DatabaseManager
+from bluesky_summarizer.database import AbstractDatabaseManager, DatabaseManager
 
 
 class TestStreamingService:
@@ -19,7 +19,7 @@ class TestStreamingService:
     @pytest.fixture
     def mock_db_manager(self):
         """Create a mock database manager."""
-        mock_db = Mock(spec=DatabaseManager)
+        mock_db = Mock(spec=AbstractDatabaseManager)
         mock_db.save_posts.return_value = {"new": 5, "updated": 0, "total": 5}
         return mock_db
 
@@ -89,9 +89,9 @@ class TestStreamingService:
     def test_streaming_service_default_initialization(self):
         """Test StreamingService initialization with defaults."""
         with patch(
-            "bluesky_summarizer.streaming.service.DatabaseManager"
-        ) as mock_db_class:
-            mock_db_class.return_value = Mock()
+            "bluesky_summarizer.streaming.service.create_database_manager"
+        ) as mock_factory:
+            mock_factory.return_value = Mock()
 
             service = StreamingService()
 
@@ -439,7 +439,7 @@ class TestStreamingServiceEdgeCases:
     @pytest.fixture
     def mock_db_manager(self):
         """Create a mock database manager."""
-        mock_db = Mock(spec=DatabaseManager)
+        mock_db = Mock(spec=AbstractDatabaseManager)
         mock_db.save_posts.return_value = {"new": 5, "updated": 0, "total": 5}
         return mock_db
 

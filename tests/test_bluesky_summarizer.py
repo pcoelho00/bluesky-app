@@ -11,7 +11,7 @@ from unittest.mock import Mock
 from bluesky_summarizer.bluesky.client import BlueSkyClient
 from bluesky_summarizer.database.models import Post, Summary
 from bluesky_summarizer.database.operations import DatabaseManager
-from bluesky_summarizer.ai.summarizer import ClaudeSummarizer
+from bluesky_summarizer.ai.claude_summarizer import ClaudeSummarizer
 
 # Global test database path
 TEST_DB_PATH = "test_database.db"
@@ -649,7 +649,7 @@ class TestClaudeSummarizer:
         mock_client.messages.create.assert_called_once()
         call_args = mock_client.messages.create.call_args
         assert call_args[1]["model"] == "claude-3-7-sonnet-latest"
-        assert call_args[1]["max_tokens"] == 1000
+        assert call_args[1]["max_tokens"] == 4096
         assert call_args[1]["temperature"] == 0.3
 
 

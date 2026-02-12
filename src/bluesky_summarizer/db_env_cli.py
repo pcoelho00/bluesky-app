@@ -40,22 +40,30 @@ def show_db_status():
 
     file_values = _read_env_file_values()
 
-    env_label = "local (Local SQLite)"
-    db_path = file_values.get("DATABASE_PATH") or os.getenv(
-        "DATABASE_PATH", "./data/bluesky_feed.db"
-    )
-    file_exists = "✓ Yes" if os.path.exists(db_path) else "✗ No"
-    table.add_row("Environment", env_label)
-    table.add_row("Database Path", db_path)
-    table.add_row("File Exists", file_exists)
+    # Determine connection URL: DATABASE_URL takes precedence over DATABASE_PATH
+    connection_url = file_values.get("DATABASE_URL") or os.getenv("DATABASE_URL")
+    if not connection_url:
+        db_path = file_values.get("DATABASE_PATH") or os.getenv(
+            "DATABASE_PATH", "./data/bluesky_feed.db"
+        )
+        connection_url = f"sqlite:///{db_path}"
 
-    # Use top-level shim console if available so tests patching 'db_env_cli.console' capture the call
-    try:
-        import db_env_cli as _shim  # type: ignore
+    # Determine backend label from the URL
+    if connection_url.startswith("sqlite"):
+        backend_label = "SQLite"
+        # Extract file path for existence check
+        db_file = connection_url.replace("sqlite:///", "")
+        file_exists = "Yes" if os.path.exists(db_file) else "No"
+        table.add_row("Backend", backend_label)
+        table.add_row("Connection URL", connection_url)
+        table.add_row("Database File", db_file)
+        table.add_row("File Exists", file_exists)
+    else:
+        backend_label = connection_url.split("://")[0] if "://" in connection_url else "Unknown"
+        table.add_row("Backend", backend_label)
+        table.add_row("Connection URL", connection_url)
 
-        _shim.console.print(table)  # type: ignore[attr-defined]
-    except Exception:
-        console.print(table)
+    console.print(table)
 
 
 @db.command(name="status")

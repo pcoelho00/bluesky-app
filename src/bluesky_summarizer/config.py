@@ -23,13 +23,46 @@ class AnthropicConfig(BaseModel):
     api_key: str = Field(..., description="Anthropic API key")
 
 
-class DatabaseConfig(BaseModel):
-    """Configuration for database connection (SQLite)."""
+class OpenAIConfig(BaseModel):
+    """Configuration for OpenAI API."""
 
-    db_path: str = Field(default="./data/bluesky_feed.db")
+    api_key: str = Field("", description="OpenAI API key")
+
+
+class GeminiConfig(BaseModel):
+    """Configuration for Gemini API."""
+
+    api_key: str = Field("", description="Gemini API key")
+
+
+class DatabaseConfig(BaseModel):
+    """Configuration for database connection.
+
+    The primary setting is ``connection_url`` -- a standard SQLAlchemy URL
+    such as ``sqlite:///./data/app.db`` or ``postgresql://user:pw@host/db``.
+
+    For backward compatibility the legacy ``db_path`` field is still
+    accepted and exposed as a property.
+    """
+
+    connection_url: str = Field(
+        default="sqlite:///./data/bluesky_feed.db",
+        description="SQLAlchemy connection URL (sqlite, postgresql, mysql, …)",
+    )
+
+    @property
+    def db_path(self) -> str:
+        """Extract the file path from a ``sqlite:///`` URL.
+
+        Returns the raw URL string for non-SQLite backends.
+        """
+        if self.connection_url.startswith("sqlite:///"):
+            return self.connection_url.replace("sqlite:///", "")
+        return self.connection_url
 
     @property
     def path(self) -> str:
+        """Alias for :attr:`db_path` (backward compat)."""
         return self.db_path
 
 
@@ -64,10 +97,16 @@ class Config:
         )
 
         self.anthropic = AnthropicConfig(api_key=self._get_env_var("ANTHROPIC_API_KEY"))
+        self.openai = OpenAIConfig(api_key=os.getenv("OPENAI_API_KEY", ""))
+        self.gemini = GeminiConfig(api_key=os.getenv("GEMINI_API_KEY", ""))
 
-        self.database = DatabaseConfig(
-            db_path=os.getenv("DATABASE_PATH", "./data/bluesky_feed.db"),
-        )
+        # Build connection URL: prefer DATABASE_URL, fall back to DATABASE_PATH
+        connection_url = os.getenv("DATABASE_URL")
+        if not connection_url:
+            db_path = os.getenv("DATABASE_PATH", "./data/bluesky_feed.db")
+            connection_url = f"sqlite:///{db_path}"
+
+        self.database = DatabaseConfig(connection_url=connection_url)
 
         self.app = AppConfig(
             default_days_back=int(os.getenv("DEFAULT_DAYS_BACK", "1")),
@@ -91,10 +130,9 @@ def get_config() -> Config:
 
 
 def set_database_environment(environment: str) -> None:
-    """Backward-compatible helper to set DB_ENVIRONMENT.
+    """Set the DB_ENVIRONMENT key in the ``.env`` file.
 
-    Note: SQLite is no longer supported; this writes the .env key for legacy
-    scripts/tests but the application will still use Turso.
+    Retained for backward compatibility with legacy scripts and tests.
     """
     if environment not in ["local", "production"]:
         raise ValueError("Environment must be either 'local' or 'production'")
@@ -122,9 +160,7 @@ def set_database_environment(environment: str) -> None:
 
 
 def get_database_environment() -> str:
-    """Backward-compatible getter for DB_ENVIRONMENT (default 'local')."""
-    # Do not implicitly load .env here to avoid picking up parent project values
-    # when tests intentionally expect a default of 'local'.
+    """Return the current ``DB_ENVIRONMENT`` value (default ``'local'``)."""
     return os.getenv("DB_ENVIRONMENT", "local")
 
 

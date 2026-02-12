@@ -1,7 +1,19 @@
-"""
-AI summarization module using Claude API.
-"""
+"""AI summarization module using multiple providers."""
 
-from .summarizer import ClaudeSummarizer
+from __future__ import annotations
 
-__all__ = ["ClaudeSummarizer"]
+from .claude_summarizer import ClaudeSummarizer
+
+__all__ = ["ClaudeSummarizer", "OpenAISummarizer", "GeminiSummarizer"]
+
+
+def __getattr__(name: str):
+    if name == "OpenAISummarizer":
+        from .openai_summarizer import OpenAISummarizer
+
+        return OpenAISummarizer
+    if name == "GeminiSummarizer":
+        from .gemini_summarizer import GeminiSummarizer
+
+        return GeminiSummarizer
+    raise AttributeError(f"module '{__name__}' has no attribute '{name}'")
